@@ -34,7 +34,7 @@
             <DockPanel Grid.Row="1" Margin="12,26,12,0">
                 <StackPanel DockPanel.Dock="Bottom" Margin="8,0,8,18">
                     <TextBlock Text="在音乐里，保持专注。" Foreground="#AAAAAA" FontSize="11" Margin="0,0,0,8"/>
-                    <TextBlock Text="Taskbar Lyrics  0.2.1" Foreground="#777777" FontSize="11"/>
+                    <TextBlock Text="Taskbar Lyrics  0.3.0" Foreground="#777777" FontSize="11"/>
                 </StackPanel>
                 <StackPanel>
                     <TextBlock Text="工作区" Foreground="#8D8D8D" FontSize="11" Margin="12,0,0,10"/>
@@ -72,11 +72,23 @@
                         <WrapPanel Margin="0,2,0,0"><Button Content="重新匹配歌词" Click="Refresh_Click" Style="{StaticResource PrimaryButton}" Margin="0,0,10,10"/><Button Content="导入本地 LRC" Click="Import_Click" Margin="0,0,0,10"/></WrapPanel>
                     </StackPanel>
                     <StackPanel x:Name="AppearancePage" Visibility="Collapsed">
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Text="显示器与图标避让" Style="{StaticResource SectionTitle}"/>
+                                <TextBlock Text="选择歌词显示的屏幕，每块屏幕独立记忆左右位置。" Style="{StaticResource Hint}" FontSize="12" Margin="0,0,0,14"/>
+                                <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="180"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="DisplayModes" SelectedIndex="0" SelectionChanged="DisplayMode_Changed" AutomationProperties.Name="显示范围"><ComboBoxItem Content="仅主屏"/><ComboBoxItem Content="指定显示器"/><ComboBoxItem Content="全部显示器"/></ComboBox>
+                                    <ComboBox x:Name="DisplayDevices" Grid.Column="2" DisplayMemberPath="Label" SelectionChanged="DisplayDevice_Changed" AutomationProperties.Name="选择显示器"/>
+                                </Grid>
+                                <DockPanel><CheckBox x:Name="AvoidIconsToggle" DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center" Click="AvoidIcons_Click" AutomationProperties.Name="自动避让任务栏图标"/><StackPanel><TextBlock Text="自动避让任务栏图标" FontWeight="Medium"/><TextBlock Text="优先移动，必要时缩短；没有足够空间时隐藏" Style="{StaticResource Hint}" FontSize="12" Margin="0,5,0,0"/></StackPanel></DockPanel>
+                                <TextBlock x:Name="PlacementStatus" Text="正在检测任务栏…" Style="{StaticResource Hint}" FontSize="12" Margin="0,14,0,0"/>
+                            </StackPanel>
+                        </Border>
                         <Border Style="{StaticResource Card}" Padding="18">
                             <StackPanel>
                                 <TextBlock Text="任务栏预览" FontSize="12" Foreground="#AAAAAA" Margin="0,0,0,10"/>
                                 <Border Background="#171717" CornerRadius="8" Padding="16,8"><Border BorderBrush="#3B3B3B" BorderThickness="1" CornerRadius="10" Background="#252525" Padding="12,10"><TextBlock x:Name="AppearanceLyric" Text="音乐在播放，歌词在身旁" TextTrimming="CharacterEllipsis" TextAlignment="Center" FontSize="16"/></Border></Border>
-                                <TextBlock Text="默认水平居中，始终固定在任务栏垂直中心。" Style="{StaticResource Hint}" FontSize="12" Margin="0,8,0,0"/>
+                                <TextBlock Text="以各屏任务栏中心为基准，自动避开图标；垂直位置固定。" Style="{StaticResource Hint}" FontSize="12" Margin="0,8,0,0"/>
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}">

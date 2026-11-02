@@ -18,6 +18,8 @@ internal static class PreviewRenderer
             () => preferences.HorizontalOffset = 0, () => { })
         { ShowInTaskbar = false, ShowActivated = false, WindowStartupLocation = WindowStartupLocation.Manual, Left = -20000, Top = -20000 };
         window.Show();
+        window.UpdateDisplays([new("preview-primary", "显示器 1（主屏） · 1920 × 1080"), new("preview-secondary", "显示器 2 · 2560 × 1440")]);
+        window.UpdatePlacementStatus("界面预览 · 图标避让已开启");
         window.UpdatePlayback("音乐在播放，歌词在身旁", new Playback(new Track(PlayerKind.AppleMusic,
             "演示歌曲", "Taskbar Lyrics", "界面预览", 240), 82, true, 1, "preview"), "演示来源 · 非真实播放", "演示数据", 82, true);
         Capture(window, "overview.png");

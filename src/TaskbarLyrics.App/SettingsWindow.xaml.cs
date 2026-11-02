@@ -14,6 +14,8 @@ public partial class SettingsWindow : Window
     private readonly Action<bool> changed;
     private readonly Action import, refresh, center, exit;
     private bool ready;
+    private bool updatingDisplays;
+    private DisplayOption[] displayOptions = [];
     public SettingsWindow(Settings settings, Action<bool> changed, Action import, Action refresh, Action center, Action exit)
     {
         this.settings = settings; this.changed = changed;
@@ -22,6 +24,9 @@ public partial class SettingsWindow : Window
         Players.SelectedIndex = (int)settings.Player;
         FontSlider.Value = settings.FontSize; OffsetSlider.Value = settings.Offset;
         LockedToggle.IsChecked = settings.Locked; OnlineToggle.IsChecked = settings.Online;
+        DisplayModes.SelectedIndex = (int)settings.DisplayMode;
+        AvoidIconsToggle.IsChecked = settings.AvoidIcons;
+        UpdateDisplays(TaskbarInspector.Displays());
         ready = true;
         UpdateValues(); SelectPage(0);
         SourceInitialized += (_, _) =>
@@ -50,8 +55,24 @@ public partial class SettingsWindow : Window
         FontValue.Text = $"{settings.FontSize:0} px";
         OffsetValue.Text = $"{settings.Offset:+0.0;-0.0;0.0} 秒";
         AppearanceLyric.FontSize = settings.FontSize;
-        PlacementText.Text = Math.Abs(settings.HorizontalOffset) < 0.5 ? "居中 · 仅支持左右拖动"
-            : $"相对中心{(settings.HorizontalOffset < 0 ? "向左" : "向右")} {Math.Abs(settings.HorizontalOffset):0} px · 高度固定";
+        PlacementText.Text = "各屏独立记忆 · 仅支持左右拖动 · 高度固定";
+    }
+    public void UpdatePlacementStatus(string text) => PlacementStatus.Text = text;
+    public void UpdateDisplays(IReadOnlyList<DisplayOption> options)
+    {
+        if (displayOptions.SequenceEqual(options) && DisplayDevices.ItemsSource is not null) return;
+        updatingDisplays = true;
+        try
+        {
+            displayOptions = options.ToArray();
+            var shown = displayOptions.ToList();
+            if (!string.IsNullOrWhiteSpace(settings.DisplayDevice) && !shown.Any(x => x.Id.Equals(settings.DisplayDevice, StringComparison.OrdinalIgnoreCase)))
+                shown.Add(new(settings.DisplayDevice, "已断开的显示器（恢复连接后使用）"));
+            DisplayDevices.ItemsSource = shown;
+            DisplayDevices.SelectedItem = shown.FirstOrDefault(x => x.Id.Equals(settings.DisplayDevice, StringComparison.OrdinalIgnoreCase)) ?? shown.FirstOrDefault();
+            DisplayDevices.IsEnabled = settings.DisplayMode == DisplayMode.Selected;
+        }
+        finally { updatingDisplays = false; }
     }
     public void SelectPage(int index)
     {
@@ -79,6 +100,20 @@ public partial class SettingsWindow : Window
     private void Offset_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) { if (!ready) return; settings.Offset = Math.Round(OffsetSlider.Value, 1); UpdateValues(); changed(false); }
     private void Locked_Click(object sender, RoutedEventArgs e) { settings.Locked = LockedToggle.IsChecked == true; changed(false); }
     private void Online_Click(object sender, RoutedEventArgs e) { settings.Online = OnlineToggle.IsChecked == true; changed(true); }
+    private void AvoidIcons_Click(object sender, RoutedEventArgs e) { settings.AvoidIcons = AvoidIconsToggle.IsChecked == true; changed(false); }
+    private void DisplayMode_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ready) return;
+        settings.DisplayMode = (DisplayMode)DisplayModes.SelectedIndex;
+        DisplayDevices.IsEnabled = settings.DisplayMode == DisplayMode.Selected;
+        if (settings.DisplayMode == DisplayMode.Selected && DisplayDevices.SelectedItem is DisplayOption option) settings.DisplayDevice = option.Id;
+        changed(false);
+    }
+    private void DisplayDevice_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ready || updatingDisplays || DisplayDevices.SelectedItem is not DisplayOption option) return;
+        settings.DisplayDevice = option.Id; changed(false);
+    }
     private void Center_Click(object sender, RoutedEventArgs e) { center(); UpdateValues(); }
     private void Import_Click(object sender, RoutedEventArgs e) => import();
     private void Refresh_Click(object sender, RoutedEventArgs e) => refresh();

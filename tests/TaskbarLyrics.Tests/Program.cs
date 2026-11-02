@@ -51,6 +51,43 @@ Check(TaskbarLayout.Calculate(0, 0, 48, 1080, 0) is null, "vertical taskbar does
 Check(TaskbarLayout.Calculate(0, 0, 1920, 48, double.NaN)!.Offset == 0, "invalid saved offset returns to center");
 var resized = TaskbarLayout.Calculate(0, 1032, 1280, 48, 100000)!;
 Check(resized.Left + resized.Width <= 1272, "display resize clamps stored offset");
+var blocked = new[] { new HorizontalSpan(650, 1270) };
+var avoided = TaskbarLayout.Calculate(0, 1032, 1920, 48, 0, blocked, true)!;
+Check(avoided.Width == 520 && (avoided.Left + avoided.Width <= 642 || avoided.Left >= 1278), "move full lyric bar away from centered taskbar icons");
+Check(avoided.Top == centered.Top, "icon avoidance preserves vertical center");
+var reduced = TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 200), new(600, 800)], true)!;
+Check(reduced.Width == 384 && reduced.Left == 208, "shorten lyrics to fit limited free space");
+Check(TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 350), new(500, 800)], true) is null, "hide when no readable free lane remains");
+Check(TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 800)], true) is null, "fully occupied taskbar hides lyrics");
+var merged = TaskbarLayout.Calculate(0, 0, 1200, 48, 0, [new(500, 700), new(0, 300), new(250, 520)], true)!;
+Check(merged.Left >= 708 && merged.Left + merged.Width <= 1192, "merge overlapping and unordered occupied rectangles");
+var unblocked = TaskbarLayout.Calculate(0, 1032, 1920, 48, 0, blocked, false)!;
+Check(unblocked == centered, "avoidance switch restores centered layout");
+Check(TaskbarLayout.Calculate(0, 1032, 1920, 48, 0, [], true) == centered, "known empty taskbar uses normal center");
+var negativeAvoid = TaskbarLayout.Calculate(-1920, -48, 1920, 48, -900, [new(-1920, -1400)], true)!;
+Check(negativeAvoid.Left >= -1392 && negativeAvoid.Top == -41, "avoid icons on a monitor with negative screen coordinates");
+var gapPreference = TaskbarLayout.Calculate(0, 0, 1600, 48, 0, [new(500, 1000)], true)!;
+Check(gapPreference.Left >= 1008 && gapPreference.Width == 520, "prefer a full width lane over a closer short lane");
+var before = TaskbarLayout.Calculate(0, 0, 1920, 48, 0, blocked, true);
+var after = TaskbarLayout.Calculate(0, 0, 1920, 48, 0, [], true);
+Check(before!.Left != after!.Left && after.Offset == 0, "return to requested center after icons disappear");
+Check(TaskbarLayout.Calculate(0, 0, 1920, 48, 0, [new(double.NaN, 20), new(40, 30)], true)!.Offset == 0, "ignore malformed occupied spans");
+var screens = new[] { new DisplayTarget("secondary", false), new DisplayTarget("primary", true) };
+Check(DisplaySelection.Resolve(screens, DisplayMode.Primary, null).SequenceEqual(["primary"]), "choose primary screen independently of enumeration order");
+Check(DisplaySelection.Resolve(screens, DisplayMode.Selected, "SECONDARY").SequenceEqual(["secondary"]), "select monitor by stable case insensitive device ID");
+Check(DisplaySelection.Resolve(screens, DisplayMode.All, null).Count == 2, "all display mode returns every available taskbar");
+Check(DisplaySelection.Resolve(screens, DisplayMode.Selected, "disconnected").SequenceEqual(["primary"]), "disconnected selected display falls back to primary");
+Check(DisplaySelection.Resolve(screens, DisplayMode.Selected, "secondary").SequenceEqual(["secondary"]), "reconnected preferred display selected again");
+Check(DisplaySelection.Resolve([], DisplayMode.All, null).Count == 0, "no taskbars produces no offscreen window");
+Check(DisplaySelection.Resolve([new("only", false)], DisplayMode.Primary, null).SequenceEqual(["only"]), "fall back to available taskbar when primary is absent");
+Check(DisplaySelection.Resolve([new("a", true), new("A", false)], DisplayMode.All, null).Count == 1, "deduplicate taskbars for same display");
+foreach (var scale in new[] { 1d, 1.25, 1.5, 2 })
+{
+    var scaled = TaskbarLayout.Calculate(0, 0, 1920 / scale, 48, 0, [new(700 / scale, 1300 / scale)], true)!;
+    var x = (int)Math.Round(scaled.Left * scale);
+    var right = x + (int)Math.Floor(scaled.Width * scale);
+    Check(right <= 700 || x >= 1300, $"physical icon bounds remain clear at {scale * 100:0}% scaling");
+}
 Console.WriteLine($"{passed} checks passed.");
 if (args.Contains("--smoke"))
 {

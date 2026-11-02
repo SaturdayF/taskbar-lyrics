@@ -1,12 +1,7 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Interop;
-using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Threading;
 using TaskbarLyrics.Core;
 using Application = System.Windows.Application;
@@ -20,6 +15,10 @@ public sealed class Settings
     public double Offset { get; set; }
     public double FontSize { get; set; } = 16;
     public double HorizontalOffset { get; set; }
+    public Dictionary<string, double> ScreenOffsets { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public DisplayMode DisplayMode { get; set; }
+    public string? DisplayDevice { get; set; }
+    public bool AvoidIcons { get; set; } = true;
     public bool Online { get; set; } = true;
     public bool Locked { get; set; }
 }
@@ -30,140 +29,108 @@ public static class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--check-placement")
+        {
+            var checkApp = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+            checkApp.Startup += async (_, _) => checkApp.Shutdown(await PlacementCheck.RunAsync(args[1]));
+            Environment.ExitCode = checkApp.Run(); return;
+        }
         if (args.Length == 2 && args[0] == "--render-previews")
         {
             var previewApp = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             try { PreviewRenderer.Render(args[1]); }
             catch (Exception ex) { Directory.CreateDirectory(args[1]); File.WriteAllText(Path.Combine(args[1], "error.txt"), ex.ToString()); Environment.ExitCode = 1; }
-            previewApp.Shutdown();
+            previewApp.Shutdown(); return;
+        }
+        if (args.Length == 2 && args[0] == "--taskbar-probe")
+        {
+            using var inspector = new TaskbarInspector();
+            var watch = Stopwatch.StartNew();
+            while (inspector.Snapshots.Length == 0 && watch.Elapsed < TimeSpan.FromSeconds(6)) Thread.Sleep(100);
+            var bars = inspector.Snapshots;
+            var result = bars.Select(x => new { x.Device, x.IsPrimary, x.Bounds, x.Scale, x.Occupied, x.Reliable, x.CandidateCount, x.Error,
+                AgeSeconds = (DateTime.UtcNow - x.CapturedAt).TotalSeconds,
+                Layout = TaskbarLayout.Calculate(0, 0, x.Bounds.Width / x.Scale, x.Bounds.Height / x.Scale, 0,
+                    x.Occupied.Select(r => new HorizontalSpan((r.Left - x.Bounds.Left) / x.Scale, (r.Right - x.Bounds.Left) / x.Scale)).ToArray(), true) });
+            File.WriteAllText(args[1], JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            if (bars.Length == 0 || bars.Any(x => !x.Reliable)) Environment.ExitCode = 1;
             return;
         }
         Directory.CreateDirectory(DataDirectory);
-        using var mutex = new Mutex(true, "Local\\TaskbarLyrics-0.1", out var first);
-        if (!first && !args.Contains("--probe") && !args.Contains("--render-previews")) return;
         if (args.Contains("--probe"))
         {
             try { File.WriteAllLines(Path.Combine(DataDirectory, "sessions.txt"), new MediaReader().ProbeAsync().GetAwaiter().GetResult()); }
             catch (Exception ex) { File.WriteAllText(Path.Combine(DataDirectory, "sessions.txt"), ex.ToString()); }
             return;
         }
+        using var mutex = new Mutex(true, "Local\\TaskbarLyrics-0.1", out var first);
+        if (!first) return;
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.DispatcherUnhandledException += (_, e) =>
         {
             File.WriteAllText(Path.Combine(DataDirectory, "last-error.txt"), e.Exception.ToString());
             MessageBox.Show("运行出错，详情已保存到应用数据目录。\n" + e.Exception.Message, "Taskbar Lyrics");
-            e.Handled = true;
-            app.Shutdown(1);
+            e.Handled = true; app.Shutdown(1);
         };
-        var overlay = new LyricsWindow(args.Contains("--demo"));
-        app.Run(overlay);
+        using var controller = new LyricsController(args.Contains("--demo"));
+        controller.Start(); app.Run();
     }
 }
 
-public sealed class LyricsWindow : Window
+internal sealed class LyricsController : IDisposable
 {
-    private readonly TextBlock lyric = new() { Text = "♫  Taskbar Lyrics · 等待音乐", TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, TextAlignment = TextAlignment.Center };
     private readonly MediaReader reader = new();
     private readonly LyricService service = new(Path.Combine(Program.DataDirectory, "lyrics"));
     private readonly Settings settings;
     private readonly System.Windows.Forms.NotifyIcon tray;
     private readonly System.Drawing.Icon trayIcon;
+    private readonly TaskbarInspector inspector = new();
+    private readonly Dictionary<string, LyricOverlay> overlays = new(StringComparer.OrdinalIgnoreCase);
     private readonly DispatcherTimer poll = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly DispatcherTimer tick = new() { Interval = TimeSpan.FromMilliseconds(80) };
     private readonly Stopwatch positionClock = Stopwatch.StartNew();
     private readonly bool demo;
-    private bool polling, exiting, dragging;
+    private bool polling, exiting, migratedOffset;
     private Playback? playback;
     private LyricResult? lyrics;
     private CancellationTokenSource? lookup;
     private SettingsWindow? settingsWindow;
-    private int dragStartX;
-    private double dragStartOffset;
-    private readonly Border lyricBorder;
     private string status = "打开 QQ 音乐、网易云音乐或 Apple Music，并启用系统媒体控制。";
+    private string placementStatus = "正在检测任务栏…";
+    private string line = "♫  Taskbar Lyrics · 等待音乐", tooltip = "";
     private DateTime lastAttempt;
     private static string SettingsPath => Path.Combine(Program.DataDirectory, "settings.json");
 
-    public LyricsWindow(bool demo)
+    public LyricsController(bool demo)
     {
         this.demo = demo;
         try { settings = JsonSerializer.Deserialize<Settings>(File.ReadAllText(SettingsPath)) ?? new(); }
         catch (Exception ex) when (ex is IOException or JsonException) { settings = new(); }
         settings.FontSize = Math.Clamp(double.IsFinite(settings.FontSize) ? settings.FontSize : 16, 11, 28);
         settings.Offset = Math.Clamp(double.IsFinite(settings.Offset) ? settings.Offset : 0, -10, 10);
+        settings.ScreenOffsets = new(settings.ScreenOffsets ?? new(), StringComparer.OrdinalIgnoreCase);
         if (!Enum.IsDefined(settings.Player)) settings.Player = PlayerKind.Auto;
-        Width = 460; Height = 36;
-        Title = "Taskbar Lyrics"; Icon = AppAssets.Image; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
-        AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; ShowInTaskbar = false; ShowActivated = false;
-        lyric.FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI");
-        lyric.FontSize = settings.FontSize; lyric.LineHeight = settings.FontSize + 2;
-        lyric.LineStackingStrategy = LineStackingStrategy.BlockLineHeight; lyric.Foreground = Brushes.White;
-        lyricBorder = new Border { Background = new SolidColorBrush(Color.FromArgb(210, 24, 24, 24)), BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 0, 14, 0), Child = lyric };
-        Content = lyricBorder;
-        Cursor = settings.Locked ? Cursors.Arrow : Cursors.SizeWE;
-        MouseEnter += (_, _) => lyricBorder.Background = new SolidColorBrush(Color.FromArgb(245, 38, 38, 38));
-        MouseLeave += (_, _) => lyricBorder.Background = new SolidColorBrush(Color.FromArgb(210, 24, 24, 24));
-        var menu = new ContextMenu();
-        AddMenu(menu, "设置与当前歌曲", ShowSettings);
-        AddMenu(menu, "导入当前歌曲的 LRC…", Import);
-        AddMenu(menu, "重新获取歌词", () => { if (playback is not null) _ = LoadLyricsAsync(playback.Track); });
-        AddMenu(menu, "恢复任务栏居中", Center);
-        AddMenu(menu, "退出", Exit);
-        ContextMenu = menu;
-        MouseLeftButtonDown += (_, e) =>
-        {
-            if (e.ClickCount == 2) { ShowSettings(); return; }
-            if (settings.Locked) return;
-            if (!GetCursorPos(out var cursor)) return;
-            dragStartX = cursor.X;
-            dragStartOffset = settings.HorizontalOffset;
-            dragging = CaptureMouse();
-            e.Handled = true;
-        };
-        MouseMove += (_, e) =>
-        {
-            if (!dragging) return;
-            if (e.LeftButton != MouseButtonState.Pressed) { ReleaseMouseCapture(); return; }
-            if (!GetCursorPos(out var cursor)) return;
-            var scale = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice.M11 ?? 1;
-            settings.HorizontalOffset = dragStartOffset + (cursor.X - dragStartX) * scale;
-            Place();
-        };
-        MouseLeftButtonUp += (_, _) => { if (dragging) ReleaseMouseCapture(); };
-        LostMouseCapture += (_, _) => { if (dragging) { dragging = false; Place(); Save(); } };
-        SourceInitialized += (_, _) =>
-        {
-            var handle = new WindowInteropHelper(this).Handle;
-            SetWindowLongPtr(handle, -20, GetWindowLongPtr(handle, -20) | 0x08000080); // No activate; tool window.
-            Place();
-        };
+        if (!Enum.IsDefined(settings.DisplayMode)) settings.DisplayMode = DisplayMode.Primary;
+        inspector.SetAvoidance(settings.AvoidIcons);
         trayIcon = AppAssets.CreateTrayIcon();
         tray = new System.Windows.Forms.NotifyIcon { Icon = trayIcon, Text = "Taskbar Lyrics", Visible = true };
-        var trayMenu = new System.Windows.Forms.ContextMenuStrip();
-        trayMenu.Items.Add("设置与当前歌曲", null, (_, _) => Dispatcher.Invoke(ShowSettings));
-        trayMenu.Items.Add("恢复任务栏居中", null, (_, _) => Dispatcher.Invoke(Center));
-        trayMenu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(Exit));
-        tray.ContextMenuStrip = trayMenu;
-        tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowSettings);
-        poll.Tick += async (_, _) => await PollAsync();
-        tick.Tick += (_, _) => RenderLine();
-        Closed += (_, _) => { if (!exiting) Exit(); };
-        Loaded += async (_, _) =>
-        {
-            poll.Start(); tick.Start();
-            if (demo)
-            {
-                playback = new(new(PlayerKind.AppleMusic, "演示歌曲", "Taskbar Lyrics", "演示数据", 24), 0, true, 1, "demo");
-                lyrics = new("演示 · 非真实播放", "[00:00.00]♫  音乐在播放，歌词在身旁\n[00:05.00]QQ 音乐 · 网易云音乐 · Apple Music\n[00:10.00]双击打开设置，拖动调整位置\n[00:15.00]此处为演示歌词，可随时退出\n[00:20.00]Taskbar Lyrics · 让音乐留在任务栏");
-                status = "演示模式：歌词和播放进度均为模拟数据。"; positionClock.Restart();
-            }
-            else await PollAsync();
-            ShowSettings();
-        };
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("设置与当前歌曲", null, (_, _) => Application.Current.Dispatcher.Invoke(ShowSettings));
+        menu.Items.Add("恢复任务栏居中", null, (_, _) => Application.Current.Dispatcher.Invoke(Center));
+        menu.Items.Add("退出", null, (_, _) => Application.Current.Dispatcher.Invoke(Exit));
+        tray.ContextMenuStrip = menu;
+        tray.DoubleClick += (_, _) => Application.Current.Dispatcher.Invoke(ShowSettings);
+        poll.Tick += async (_, _) => await PollAsync(); tick.Tick += (_, _) => RenderLine();
     }
-    private static void AddMenu(ContextMenu menu, string text, Action action)
+    public void Start()
     {
-        var item = new MenuItem { Header = text }; item.Click += (_, _) => action(); menu.Items.Add(item);
+        if (demo)
+        {
+            playback = new(new(PlayerKind.AppleMusic, "演示歌曲", "Taskbar Lyrics", "演示数据", 24), 0, true, 1, "demo");
+            lyrics = new("演示 · 非真实播放", "[00:00.00]♫  音乐在播放，歌词在身旁\n[00:05.00]QQ 音乐 · 网易云音乐 · Apple Music\n[00:10.00]图标自动避让，多屏同步显示\n[00:15.00]此处为演示歌词，可随时退出\n[00:20.00]Taskbar Lyrics · 让音乐留在任务栏");
+            status = "演示模式：歌词和播放进度均为模拟数据。"; positionClock.Restart();
+        }
+        poll.Start(); tick.Start(); _ = PollAsync(); ShowSettings();
     }
     private async Task PollAsync()
     {
@@ -182,20 +149,14 @@ public sealed class LyricsWindow : Window
                 status = "未检测到支持的媒体会话。请在播放器设置中启用系统媒体控制（SMTC）。";
             }
             else if (changed || (lyrics?.Lines.Count == 0 && DateTime.UtcNow - lastAttempt > TimeSpan.FromMinutes(2)))
-            { _ = LoadLyricsAsync(next.Track); }
+                _ = LoadLyricsAsync(next.Track);
         }
-        catch (Exception ex)
-        {
-            lookup?.Cancel(); playback = null; lyrics = null;
-            status = "读取媒体会话失败：" + ex.Message;
-        }
+        catch (Exception ex) { lookup?.Cancel(); playback = null; lyrics = null; status = "读取媒体会话失败：" + ex.Message; }
         finally { polling = false; }
     }
     private async Task LoadLyricsAsync(Track track)
     {
-        lookup?.Cancel(); lookup?.Dispose();
-        lookup = new CancellationTokenSource();
-        var token = lookup.Token;
+        lookup?.Cancel(); lookup?.Dispose(); lookup = new CancellationTokenSource(); var token = lookup.Token;
         lyrics = null; status = "正在匹配同步歌词…"; lastAttempt = DateTime.UtcNow;
         try
         {
@@ -215,32 +176,65 @@ public sealed class LyricsWindow : Window
         if (playback?.Track.Duration > 0) position = Math.Min(position, playback.Track.Duration);
         var lines = lyrics?.Lines;
         var index = lines is null ? -1 : LrcParser.FindLine(lines, position + settings.Offset);
-        lyric.Text = playback is null ? "♫  Taskbar Lyrics · 等待音乐"
+        line = playback is null ? "♫  Taskbar Lyrics · 等待音乐"
             : index >= 0 ? (string.IsNullOrWhiteSpace(lines![index].Text) ? "♫  间奏" : lines[index].Text)
             : $"♫  {playback.Track.Title} · {playback.Track.Artist}";
-        lyric.Opacity = playback is null || playback.Playing ? 1 : 0.65;
-        var summary = playback is null ? status : $"{playback.Track.Title}\n{playback.Track.Artist} · {playback.Track.Player}\n{(playback.Playing ? "播放中" : "已暂停")}  {TimeSpan.FromSeconds(Math.Max(0, position)):mm\\:ss}\n歌词来源：{lyrics?.Source ?? "匹配中"}\n{status}";
-        ToolTip = summary;
-        settingsWindow?.UpdatePlayback(lyric.Text, playback, lyrics?.Source, status, position, demo);
+        tooltip = playback is null ? status : $"{playback.Track.Title}\n{playback.Track.Artist} · {playback.Track.Player}\n{(playback.Playing ? "播放中" : "已暂停")}  {TimeSpan.FromSeconds(Math.Max(0, position)):mm\\:ss}\n歌词来源：{lyrics?.Source ?? "匹配中"}\n{status}";
+        foreach (var overlay in overlays.Values) overlay.Update(line, tooltip, playback?.Playing != false);
+        settingsWindow?.UpdatePlayback(line, playback, lyrics?.Source, status, position, demo);
+        settingsWindow?.UpdatePlacementStatus(placementStatus);
     }
     private void Place()
     {
-        var bar = FindWindow("Shell_TrayWnd", null);
-        if (bar == IntPtr.Zero || !GetWindowRect(bar, out var rect)) return;
-        var source = PresentationSource.FromVisual(this);
-        if (source?.CompositionTarget is null) return;
-        var fromDevice = source.CompositionTarget.TransformFromDevice;
-        var a = fromDevice.Transform(new System.Windows.Point(rect.Left, rect.Top));
-        var b = fromDevice.Transform(new System.Windows.Point(rect.Right, rect.Bottom));
-        var bounds = TaskbarLayout.Calculate(a.X, a.Y, b.X - a.X, b.Y - a.Y, settings.HorizontalOffset);
-        Opacity = bounds is null ? 0 : 1;
-        IsHitTestVisible = bounds is not null;
-        if (bounds is null) return;
-        Width = bounds.Width; Height = bounds.Height;
-        Left = bounds.Left; Top = bounds.Top;
-        settings.HorizontalOffset = bounds.Offset;
+        if (exiting) return;
+        inspector.SetAvoidance(settings.AvoidIcons);
+        var bars = inspector.Snapshots.Where(TaskbarInspector.IsCurrent).GroupBy(x => x.Device, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.First()).ToArray();
+        var selected = DisplaySelection.Resolve(bars.Select(x => new DisplayTarget(x.Device, x.IsPrimary)).ToArray(), settings.DisplayMode, settings.DisplayDevice);
+        if (!migratedOffset && bars.Length > 0)
+        {
+            var primary = bars.FirstOrDefault(x => x.IsPrimary) ?? bars[0];
+            if (settings.ScreenOffsets.Count == 0 && double.IsFinite(settings.HorizontalOffset)) settings.ScreenOffsets[primary.Device] = settings.HorizontalOffset;
+            migratedOffset = true;
+        }
+        foreach (var key in overlays.Keys.Where(x => !selected.Contains(x, StringComparer.OrdinalIgnoreCase)).ToArray())
+        { overlays[key].Close(); overlays.Remove(key); }
+        int shown = 0, pending = 0, crowded = 0;
+        foreach (var device in selected)
+        {
+            var bar = bars.First(x => x.Device.Equals(device, StringComparison.OrdinalIgnoreCase));
+            if (!overlays.TryGetValue(device, out var overlay))
+            {
+                overlay = new LyricOverlay(settings, Move, ShowSettings, Import, Refresh, Center, Exit);
+                overlays.Add(device, overlay); overlay.Show(); overlay.Update(line, tooltip, playback?.Playing != false);
+            }
+            var fresh = DateTime.UtcNow - bar.CapturedAt < TimeSpan.FromSeconds(8);
+            var canPlace = fresh && (!settings.AvoidIcons || bar.Reliable);
+            settings.ScreenOffsets.TryGetValue(device, out var offset);
+            var spans = bar.Occupied.Select(x => new HorizontalSpan((x.Left - bar.Bounds.Left) / bar.Scale, (x.Right - bar.Bounds.Left) / bar.Scale)).ToArray();
+            var bounds = canPlace ? TaskbarLayout.Calculate(0, 0, bar.Bounds.Width / bar.Scale, bar.Bounds.Height / bar.Scale, offset, spans, settings.AvoidIcons) : null;
+            overlay.Place(bar, bounds);
+            if (!canPlace) pending++; else if (bounds is null) crowded++; else shown++;
+        }
+        placementStatus = bars.Length == 0 ? "正在检测可用任务栏…"
+            : $"已在 {shown} 个屏幕显示" + (settings.AvoidIcons ? " · 图标避让已开启" : " · 图标避让已关闭")
+                + (crowded > 0 ? $" · {crowded} 个屏幕空间不足或任务栏方向不受支持，已隐藏" : "")
+                + (pending > 0 ? $" · {pending} 个屏幕正在检测布局" : "");
+        if (settings.DisplayMode == DisplayMode.Selected && !bars.Any(x => x.Device.Equals(settings.DisplayDevice, StringComparison.OrdinalIgnoreCase)))
+            placementStatus += " · 指定屏幕的任务栏不可用，暂用主屏";
+        settingsWindow?.UpdateDisplays(TaskbarInspector.Displays());
+        settingsWindow?.UpdatePlacementStatus(placementStatus);
     }
-    private void Center() { settings.HorizontalOffset = 0; Place(); Save(); }
+    private void Move(string device, double offset, bool save)
+    {
+        if (double.IsFinite(offset)) settings.ScreenOffsets[device] = offset;
+        if (save) Save(); else Place();
+    }
+    private void Center()
+    {
+        foreach (var key in overlays.Keys) settings.ScreenOffsets[key] = 0;
+        settings.HorizontalOffset = 0; Place(); Save();
+    }
     private void Save()
     {
         try { File.WriteAllText(SettingsPath, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true })); }
@@ -251,7 +245,8 @@ public sealed class LyricsWindow : Window
         if (playback is null || demo) { MessageBox.Show("请先在支持的播放器中播放歌曲。", "导入歌词"); return; }
         var track = playback.Track;
         var picker = new Microsoft.Win32.OpenFileDialog { Filter = "LRC 歌词 (*.lrc)|*.lrc", CheckFileExists = true };
-        if (picker.ShowDialog((Window?)settingsWindow ?? this) != true) return;
+        var accepted = settingsWindow is null ? picker.ShowDialog() : picker.ShowDialog(settingsWindow);
+        if (accepted != true) return;
         try
         {
             if (new FileInfo(picker.FileName).Length > 2 * 1024 * 1024) throw new IOException("歌词文件不能超过 2 MB。");
@@ -260,39 +255,25 @@ public sealed class LyricsWindow : Window
         }
         catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException) { MessageBox.Show(ex.Message, "导入失败"); }
     }
+    private void Refresh() { if (playback is not null && !demo) _ = LoadLyricsAsync(playback.Track); }
     private void ShowSettings()
     {
         if (settingsWindow is not null) { settingsWindow.Activate(); return; }
-        var window = new SettingsWindow(settings, ApplySettings, Import,
-            () => { if (playback is not null && !demo) _ = LoadLyricsAsync(playback.Track); }, Center, Exit);
-        settingsWindow = window;
-        window.Closed += (_, _) => settingsWindow = null;
-        RenderLine();
-        window.Show();
+        var window = new SettingsWindow(settings, ApplySettings, Import, Refresh, Center, Exit);
+        settingsWindow = window; window.Closed += (_, _) => settingsWindow = null;
+        RenderLine(); window.UpdateDisplays(TaskbarInspector.Displays()); window.Show();
     }
     private void ApplySettings(bool reload)
     {
-        lyric.FontSize = settings.FontSize;
-        lyric.LineHeight = settings.FontSize + 2;
-        Cursor = settings.Locked ? Cursors.Arrow : Cursors.SizeWE;
-        Place(); Save();
-        if (reload && !demo)
-        {
-            lookup?.Cancel(); playback = null; lyrics = null;
-            _ = PollAsync();
-        }
+        Place(); Save(); RenderLine();
+        if (reload && !demo) { lookup?.Cancel(); playback = null; lyrics = null; _ = PollAsync(); }
     }
-    private void Exit()
+    private void Exit() { Dispose(); Application.Current.Shutdown(); }
+    public void Dispose()
     {
         if (exiting) return;
-        exiting = true; lookup?.Cancel(); poll.Stop(); tick.Stop(); Save(); tray.Dispose(); trayIcon.Dispose(); service.Dispose();
-        Application.Current.Shutdown();
+        exiting = true; lookup?.Cancel(); poll.Stop(); tick.Stop(); inspector.Dispose(); Save();
+        foreach (var overlay in overlays.Values.ToArray()) overlay.Close(); overlays.Clear();
+        tray.Dispose(); trayIcon.Dispose(); service.Dispose();
     }
-    [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)] private struct CursorPoint { public int X, Y; }
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetCursorPos(out CursorPoint point);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr FindWindow(string name, string? title);
-    [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetWindowRect(IntPtr window, out Rect rect);
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(IntPtr window, int index);
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(IntPtr window, int index, nint value);
 }
