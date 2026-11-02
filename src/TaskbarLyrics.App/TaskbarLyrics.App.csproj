@@ -6,8 +6,13 @@
     <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>disable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
+    <ApplicationIcon>../../assets/app.ico</ApplicationIcon>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../TaskbarLyrics.Core/TaskbarLyrics.Core.csproj" /></ItemGroup>
+  <ItemGroup>
+    <Resource Include="../../assets/app.png" Link="Assets/app.png" />
+    <EmbeddedResource Include="../../assets/app.ico" LogicalName="TaskbarLyrics.App.app.ico" />
+  </ItemGroup>
 </Project>

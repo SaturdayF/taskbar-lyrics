@@ -1,6 +1,12 @@
+<p align="center"><img src="assets/app.png" width="100" alt="声波横栏图标" /></p>
+
 # Taskbar Lyrics · 任务栏歌词
 
-Windows 10/11 的歌词伴随工具，把当前播放歌曲的同步歌词显示在任务栏区域。当前 v0.2.0，C# / .NET 8 / WPF。
+Windows 10/11 的歌词伴随工具，把当前播放歌曲的同步歌词显示在任务栏区域。当前 v0.2.1，C# / .NET 8 / WPF。
+
+## v0.2.1 更新
+
+采用选定的 B「声波横栏」图标，应用于 EXE、Windows 窗口、系统托盘和设置页品牌区。PNG 原图和包含 16–256 像素九种尺寸的 Windows ICO 位于 `assets`，构建后的程序内嵌图标资源，无需外置文件。
 
 ## v0.2.0 更新
 

@@ -11,6 +11,8 @@ internal static class PreviewRenderer
     public static void Render(string directory)
     {
         Directory.CreateDirectory(directory);
+        using var trayIcon = AppAssets.CreateTrayIcon();
+        if (trayIcon.Width != 32 || trayIcon.Height != 32) throw new InvalidOperationException("Tray icon frame did not load at 32 px.");
         var preferences = new Settings();
         var window = new SettingsWindow(preferences, _ => { }, () => { }, () => { },
             () => preferences.HorizontalOffset = 0, () => { })
@@ -27,7 +29,7 @@ internal static class PreviewRenderer
         // Reopen the same settings to cover the previous logical-parent regression.
         var reopened = new SettingsWindow(preferences, _ => { }, () => { }, () => { }, () => { }, () => { });
         reopened.Measure(new Size(960, 760)); reopened.Close();
-        File.WriteAllText(Path.Combine(directory, "result.txt"), "Rendered four previews and reopened settings successfully.");
+        File.WriteAllText(Path.Combine(directory, "result.txt"), "Rendered four previews and reopened settings successfully. Embedded brand image and 32 px tray icon loaded.");
         void Capture(Window target, string name)
         {
             target.UpdateLayout();

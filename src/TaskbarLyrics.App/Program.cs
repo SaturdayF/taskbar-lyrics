@@ -67,6 +67,7 @@ public sealed class LyricsWindow : Window
     private readonly LyricService service = new(Path.Combine(Program.DataDirectory, "lyrics"));
     private readonly Settings settings;
     private readonly System.Windows.Forms.NotifyIcon tray;
+    private readonly System.Drawing.Icon trayIcon;
     private readonly DispatcherTimer poll = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly DispatcherTimer tick = new() { Interval = TimeSpan.FromMilliseconds(80) };
     private readonly Stopwatch positionClock = Stopwatch.StartNew();
@@ -92,7 +93,7 @@ public sealed class LyricsWindow : Window
         settings.Offset = Math.Clamp(double.IsFinite(settings.Offset) ? settings.Offset : 0, -10, 10);
         if (!Enum.IsDefined(settings.Player)) settings.Player = PlayerKind.Auto;
         Width = 460; Height = 36;
-        Title = "Taskbar Lyrics"; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
+        Title = "Taskbar Lyrics"; Icon = AppAssets.Image; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; ShowInTaskbar = false; ShowActivated = false;
         lyric.FontFamily = new FontFamily("Microsoft YaHei UI, Segoe UI");
         lyric.FontSize = settings.FontSize; lyric.LineHeight = settings.FontSize + 2;
@@ -136,7 +137,8 @@ public sealed class LyricsWindow : Window
             SetWindowLongPtr(handle, -20, GetWindowLongPtr(handle, -20) | 0x08000080); // No activate; tool window.
             Place();
         };
-        tray = new System.Windows.Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Information, Text = "Taskbar Lyrics", Visible = true };
+        trayIcon = AppAssets.CreateTrayIcon();
+        tray = new System.Windows.Forms.NotifyIcon { Icon = trayIcon, Text = "Taskbar Lyrics", Visible = true };
         var trayMenu = new System.Windows.Forms.ContextMenuStrip();
         trayMenu.Items.Add("设置与当前歌曲", null, (_, _) => Dispatcher.Invoke(ShowSettings));
         trayMenu.Items.Add("恢复任务栏居中", null, (_, _) => Dispatcher.Invoke(Center));
@@ -283,7 +285,7 @@ public sealed class LyricsWindow : Window
     private void Exit()
     {
         if (exiting) return;
-        exiting = true; lookup?.Cancel(); poll.Stop(); tick.Stop(); Save(); tray.Dispose(); service.Dispose();
+        exiting = true; lookup?.Cancel(); poll.Stop(); tick.Stop(); Save(); tray.Dispose(); trayIcon.Dispose(); service.Dispose();
         Application.Current.Shutdown();
     }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }

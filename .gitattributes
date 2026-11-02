@@ -1,4 +1,6 @@
 * text=auto
+*.png binary
+*.ico binary
 *.cs text eol=lf
 *.csproj text eol=lf
 *.props text eol=lf
