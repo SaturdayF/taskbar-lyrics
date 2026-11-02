@@ -8,12 +8,12 @@ Windows 任务栏同步歌词工具，通过系统媒体会话获取当前播放
 
 ## C++ 轻量原型：快速启动
 
-原生原型与下面介绍的 C# 版本并存，面向 Windows 10 2004+ / Windows 11 x64，无需另装 .NET 或 WebView2。它尚未完整迁移任务栏内避让和设置功能，详情见 [原生版说明](native/README.md)。
+原生原型 v0.1.1 与下面介绍的 C# 版本并存，面向 Windows 10 2004+ / Windows 11 x64，无需另装 .NET 或 WebView2。已支持任务栏空闲区显示与图标避让，完整设置尚未迁移，详情见 [原生版说明](native/README.md)。
 
-- **安装版**：运行 `TaskbarLyrics-Native-0.1.0-prototype-setup-x64.exe`，安装后从开始菜单打开 **Taskbar Lyrics Native Prototype**。
-- **便携版**：解压 `TaskbarLyrics-Native-0.1.0-prototype-win-x64.zip`，双击 `TaskbarLyrics.Native.exe`。
+- **安装版**：运行 `TaskbarLyrics-Native-0.1.1-prototype-setup-x64.exe`，安装后从开始菜单打开 **Taskbar Lyrics Native Prototype**。
+- **便携版**：解压 `TaskbarLyrics-Native-0.1.1-prototype-win-x64.zip`，双击 `TaskbarLyrics.Native.exe`。
 - 在 QQ 音乐、网易云音乐或 Apple Music 客户端播放歌曲，并启用播放器的系统媒体控制（SMTC）。原型会尝试读取歌曲并在线匹配歌词；真实播放器的端到端兼容性仍待逐一验证。
-- 右键歌词窗口或托盘图标，可导入 UTF-8 LRC、切换演示、关闭在线匹配或退出。歌词目前显示在任务栏上方。
+- 右键歌词窗口或托盘图标，可查看匹配状态、重试、导入 UTF-8 LRC、切换演示或退出。默认在任务栏空闲区域显示；空间不足或任务栏不可用时隐藏，托盘菜单可切换到悬浮模式。
 
 本地构建产物位于 `artifacts/`。GitHub Actions 构建成功后，可登录 GitHub 下载 `TaskbarLyrics-native-prototype-win-x64` 构件中的便携 ZIP；源码仓库不包含编译后的 EXE。
 
@@ -52,7 +52,7 @@ Windows 系统媒体会话提供歌曲信息和播放时间，歌词文本由上
 
 ## 运行
 
-另有正在验证的 [C++ 原生轻量原型](native/README.md)，目标为免运行时、小体积部署；尚未完整迁移本页列出的功能。构建命令为 `./scripts/build-native.ps1`，原 C# 版本仍保留。
+另有正在验证的 [C++ 原生轻量原型](native/README.md)，目标为免运行时、小体积部署；尚未完整迁移下面列出的 C# 版本功能。构建命令为 `./scripts/build-native.ps1`，原 C# 版本仍保留。
 
 系统要求：Windows 10 2004（19041）及以上，x64。`scripts/build.ps1 -Publish` 生成包含 .NET 运行时的便携版。
 

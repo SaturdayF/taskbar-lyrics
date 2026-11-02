@@ -1,4 +1,5 @@
 #include "lyrics.h"
+#include "layout.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -14,7 +15,14 @@ int main() {
         check(lyrics::find(lines, 20) == 2 && lyrics::find(lines, 0) == -1, "seek both directions");
         check(lyrics::parse(L"plain text").empty() && lyrics::find({}, 0) == -1, "no timestamps");
         check(lyrics::parse(L"[offset:9999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999]\n[00:00]safe").size() == 1, "malformed offset does not crash");
-        std::cout << "PASS: 8 native LRC checks\n";
+        auto slot = layout::choose(0, 1920, 960, 520, 160, {{800, 1250}, {1700, 1920}}, 8);
+        check(slot && slot->start >= 8 && slot->end <= 792 && slot->end - slot->start == 520, "avoid centered icons");
+        check(!layout::choose(0, 500, 250, 520, 160, {{0, 500}}, 8), "no room hides");
+        slot = layout::choose(-1920, 0, -960, 520, 160, {{-1920, -1500}, {-1200, 0}}, 8);
+        check(slot && slot->start >= -1492 && slot->end <= -1208, "negative screen and shrinking");
+        slot = layout::choose(0, 1000, 500, 520, 160, {{100, 600}, {400, 800}}, 8);
+        check(slot && slot->start >= 808, "merge occupied intervals");
+        std::cout << "PASS: 8 LRC and 4 taskbar layout checks\n";
         return 0;
     } catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 1; }
 }

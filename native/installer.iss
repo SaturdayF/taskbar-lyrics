@@ -1,7 +1,7 @@
 [Setup]
 AppId=TaskbarLyrics.Native.Prototype
 AppName=Taskbar Lyrics Native Prototype
-AppVersion=0.1.0
+AppVersion=0.1.1
 DefaultDirName={localappdata}\Programs\TaskbarLyricsNativePrototype
 DefaultGroupName=Taskbar Lyrics Native Prototype
 PrivilegesRequired=lowest
@@ -9,7 +9,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
 OutputDir=..\artifacts
-OutputBaseFilename=TaskbarLyrics-Native-0.1.0-prototype-setup-x64
+OutputBaseFilename=TaskbarLyrics-Native-0.1.1-prototype-setup-x64
 SetupIconFile=..\assets\app.ico
 UninstallDisplayIcon={app}\TaskbarLyrics.Native.exe
 Compression=lzma2

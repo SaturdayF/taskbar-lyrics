@@ -13,7 +13,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: TaskbarLyrics-native-prototype-win-x64
-          path: artifacts/TaskbarLyrics-Native-0.1.0-prototype-win-x64.zip
+          path: artifacts/TaskbarLyrics-Native-0.1.1-prototype-win-x64.zip
   build:
     runs-on: windows-latest
     steps:

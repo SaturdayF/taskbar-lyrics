@@ -27,7 +27,7 @@ try {
     & $rc /nologo /fo "$build/app.res" app.rc
     if ($LASTEXITCODE -ne 0) { throw 'Native resources failed.' }
     $flags = @('/nologo','/std:c++20','/EHsc','/utf-8','/W4','/WX','/O1','/MT','/DUNICODE','/D_UNICODE','/DNDEBUG')
-    & $compiler @flags "/Fo$build/main.obj" main.cpp "$build/app.res" "/Fe$out/TaskbarLyrics.Native.exe" /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib comdlg32.lib winhttp.lib windowsapp.lib normaliz.lib
+    & $compiler @flags "/Fo$build/main.obj" main.cpp "$build/app.res" "/Fe$out/TaskbarLyrics.Native.exe" /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib comdlg32.lib winhttp.lib windowsapp.lib normaliz.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
     if ($LASTEXITCODE -ne 0) { throw 'Native application build failed.' }
     & $compiler @flags "/Fo$build/tests.obj" tests.cpp "/Fe$build/native-tests.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Native tests build failed.' }
@@ -37,12 +37,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inspection failed.' }
     Copy-Item "$root/native/README.md" "$out/README.md"
     Copy-Item "$root/LICENSE" "$out/LICENSE"
-    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.1.0-prototype-win-x64.zip" -Force
+    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.1.1-prototype-win-x64.zip" -Force
     if ($Iscc) {
         & $Iscc "$root/native/installer.iss"
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
-    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.1.0-prototype-win-x64.zip" | Select-Object FullName,Length
+    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.1.1-prototype-win-x64.zip" | Select-Object FullName,Length
 } finally {
     Pop-Location
     $env:PATH = $savedPath

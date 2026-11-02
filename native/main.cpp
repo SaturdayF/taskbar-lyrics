@@ -1,6 +1,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <objbase.h>
+#include <UIAutomation.h>
 #include <shellapi.h>
 #include <commdlg.h>
 #include <winhttp.h>
@@ -16,13 +18,14 @@
 #include <mutex>
 #include <thread>
 #include "lyrics.h"
+#include "taskbar.h"
 
 using namespace winrt::Windows::Media::Control;
 using namespace winrt::Windows::Data::Json;
 using Clock = std::chrono::steady_clock;
 constexpr UINT TrayMessage = WM_APP + 1;
 constexpr UINT RefreshMessage = WM_APP + 2;
-constexpr UINT Import = 100, Online = 101, Demo = 102, Center = 103, Exit = 104;
+constexpr UINT Import = 100, Online = 101, Demo = 102, Center = 103, Exit = 104, Dock = 105, Retry = 106, Details = 107;
 constexpr size_t MaxBody = 2 * 1024 * 1024;
 struct State {
     std::wstring key, title, artist, album, status = L"等待播放器；右键查看菜单";
@@ -35,6 +38,11 @@ struct State {
 State state;
 std::mutex gate;
 std::atomic<bool> online{true}, demo{false}, stopping{false};
+bool docked = true;
+int horizontalOffset = 0, dragStart = 0, dragOffset = 0;
+bool dragging = false;
+struct BarStore { std::mutex gate; std::vector<BarSnapshot> bars; std::atomic<bool> stop{false}; };
+auto barStore = std::make_shared<BarStore>();
 HWND windowHandle = nullptr;
 HFONT font = nullptr;
 UINT taskbarCreated = 0;
@@ -67,17 +75,17 @@ struct Internet {
 [[noreturn]] void httpFailure(const char* operation) {
     throw std::runtime_error(std::string(operation) + "; WinHTTP=" + std::to_string(GetLastError()));
 }
-std::string request(const std::wstring& path) {
+std::string request(const std::wstring& path, const wchar_t* host = L"lrclib.net", const wchar_t* referer = nullptr) {
     Internet session(WinHttpOpen(L"TaskbarLyricsNative/0.1-prototype", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
     WinHttpSetTimeouts(session, 3000, 3000, 3000, 3000);
-    Internet connection(WinHttpConnect(session, L"lrclib.net", INTERNET_DEFAULT_HTTPS_PORT, 0));
-    Internet call(WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
+    Internet connection(WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0));
+    Internet call(WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, referer, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE));
     if (!WinHttpSendRequest(call, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) || !WinHttpReceiveResponse(call, nullptr)) httpFailure("HTTP unavailable");
     DWORD status = 0, length = sizeof(status);
     if (!WinHttpQueryHeaders(call, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr, &status, &length, nullptr)) httpFailure("HTTP headers");
     if (status == 404) return {};
-    if (status != 200) throw std::runtime_error("HTTP status");
+    if (status != 200) throw std::runtime_error("HTTP " + std::to_string(status));
     const auto deadline = Clock::now() + std::chrono::seconds(12);
     std::string body;
     char buffer[8192];
@@ -104,22 +112,70 @@ std::wstring normalize(const std::wstring& text) {
     }
     return result;
 }
-std::vector<lyrics::Line> fetch(const State& track) {
+bool match(const State& track, const std::wstring& title, const std::vector<std::wstring>& artists, double duration) {
+    const auto expectedTitle = normalize(track.title), expectedArtist = normalize(track.artist);
+    return !expectedTitle.empty() && !expectedArtist.empty() && normalize(title) == expectedTitle &&
+        std::any_of(artists.begin(), artists.end(), [&](const auto& artist) { return normalize(artist) == expectedArtist; }) &&
+        (track.duration <= 0 || duration <= 0 || std::abs(duration - track.duration) <= 3);
+}
+std::vector<lyrics::Line> lrclibLines(const State& track, const JsonObject& json) {
+    if (!match(track, std::wstring(json.GetNamedString(L"trackName", L"")), {std::wstring(json.GetNamedString(L"artistName", L""))}, json.GetNamedNumber(L"duration", 0))) return {};
+    if (track.duration <= 0 && !track.album.empty() && normalize(std::wstring(json.GetNamedString(L"albumName", L""))) != normalize(track.album)) return {};
+    if (!json.HasKey(L"syncedLyrics") || json.GetNamedValue(L"syncedLyrics").ValueType() != JsonValueType::String) return {};
+    return lyrics::parse(std::wstring(json.GetNamedString(L"syncedLyrics")));
+}
+std::vector<lyrics::Line> fetchLrclib(const State& track) {
     if (track.title.empty() || track.artist.empty()) return {};
     std::wstring path = L"/api/get?track_name=" + encodeQuery(track.title) + L"&artist_name=" + encodeQuery(track.artist);
     if (!track.album.empty()) path += L"&album_name=" + encodeQuery(track.album);
     if (track.duration >= 1 && track.duration <= 3600) path += L"&duration=" + std::to_wstring(std::lround(track.duration));
-    auto body = request(path);
+    // An exact album lookup can miss another edition of the same recording.
+    try {
+        auto body = request(path);
+        if (!body.empty()) { auto lines = lrclibLines(track, JsonObject::Parse(decode(body))); if (!lines.empty()) return lines; }
+    } catch (...) { /* Search may still work when the exact lookup is unavailable. */ }
+    if (!online || stopping) return {};
+    auto body = request(L"/api/search?track_name=" + encodeQuery(track.title) + L"&artist_name=" + encodeQuery(track.artist));
     if (body.empty()) return {};
-    auto json = JsonObject::Parse(decode(body));
-    auto title = std::wstring(json.GetNamedString(L"trackName", L""));
-    auto artist = std::wstring(json.GetNamedString(L"artistName", L""));
-    const double duration = json.GetNamedNumber(L"duration", 0);
-    const auto expectedTitle = normalize(track.title), expectedArtist = normalize(track.artist);
-    if (expectedTitle.empty() || expectedArtist.empty() || normalize(title) != expectedTitle || normalize(artist) != expectedArtist ||
-        (track.duration > 0 && duration > 0 && std::abs(duration - track.duration) > 3)) return {};
-    if (!json.HasKey(L"syncedLyrics") || json.GetNamedValue(L"syncedLyrics").ValueType() != JsonValueType::String) return {};
-    return lyrics::parse(std::wstring(json.GetNamedString(L"syncedLyrics")));
+    const auto candidates = JsonArray::Parse(decode(body));
+    // Prefer the same album before considering other editions with matching duration.
+    for (int pass = 0; pass < 2; ++pass) for (auto value : candidates) {
+        const auto candidate = value.GetObject();
+        const bool sameAlbum = normalize(std::wstring(candidate.GetNamedString(L"albumName", L""))) == normalize(track.album);
+        if ((pass == 0) != sameAlbum) continue;
+        auto lines = lrclibLines(track, candidate);
+        if (!lines.empty()) return lines;
+    }
+    return {};
+}
+std::vector<lyrics::Line> fetchNetease(const State& track) {
+    auto body = request(L"/api/search/get?s=" + encodeQuery(track.title + L" " + track.artist) + L"&type=1&limit=20", L"music.163.com", L"https://music.163.com/");
+    if (body.empty()) return {};
+    const auto json = JsonObject::Parse(decode(body));
+    if (!json.HasKey(L"result")) return {};
+    auto result = json.GetNamedObject(L"result");
+    if (!result.HasKey(L"songs")) return {};
+    for (const auto& value : result.GetNamedArray(L"songs")) {
+        if (!online || stopping) return {};
+        const auto song = value.GetObject(); std::vector<std::wstring> artists;
+        for (const auto& artist : song.GetNamedArray(L"artists")) artists.emplace_back(artist.GetObject().GetNamedString(L"name"));
+        if (!match(track, std::wstring(song.GetNamedString(L"name")), artists, song.GetNamedNumber(L"duration", 0) / 1000)) continue;
+        auto lyric = JsonObject::Parse(decode(request(L"/api/song/lyric?id=" + std::to_wstring(static_cast<long long>(song.GetNamedNumber(L"id"))) + L"&lv=-1&kv=-1&tv=-1", L"music.163.com", L"https://music.163.com/")));
+        if (lyric.HasKey(L"lrc")) { auto lines = lyrics::parse(std::wstring(lyric.GetNamedObject(L"lrc").GetNamedString(L"lyric", L""))); if (!lines.empty()) return lines; }
+    }
+    return {};
+}
+struct FetchResult { std::vector<lyrics::Line> lines; std::wstring status; };
+FetchResult fetch(const State& track) {
+    std::wstring failures;
+    for (int provider = 0; provider < 2 && online && !stopping; ++provider) {
+        try {
+            auto lines = provider == 0 ? fetchLrclib(track) : fetchNetease(track);
+            if (!lines.empty()) return {std::move(lines), provider == 0 ? L"LRCLIB 在线歌词" : L"网易云在线歌词"};
+        } catch (const std::exception& ex) { failures += (provider == 0 ? L"LRCLIB: " : L"网易: ") + decode(ex.what()) + L"；"; }
+        catch (...) { failures += provider == 0 ? L"LRCLIB 响应异常；" : L"网易响应异常；"; }
+    }
+    return {{}, failures.empty() ? L"未找到同步歌词；右键重试或导入 LRC" : failures + L"右键可重试或导入 LRC"};
 }
 bool supported(std::wstring id) {
     std::transform(id.begin(), id.end(), id.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
@@ -151,6 +207,7 @@ State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager,
     const auto timeline = chosen.GetTimelineProperties();
     const auto playback = chosen.GetPlaybackInfo();
     result.title = properties.Title(); result.artist = properties.Artist(); result.album = properties.AlbumTitle();
+    if (result.artist.empty()) result.artist = properties.AlbumArtist();
     if (result.title.empty()) return State{};
     result.key = std::wstring(chosen.SourceAppUserModelId()) + L"\n" + result.title + L"\n" + result.artist + L"\n" + result.album;
     result.duration = std::max(0.0, std::chrono::duration<double>(timeline.EndTime() - timeline.StartTime()).count());
@@ -168,34 +225,17 @@ void worker() {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
     GlobalSystemMediaTransportControlsSessionManager manager{nullptr};
     std::wstring previous;
-    auto nextFetch = Clock::now();
     while (!stopping) {
         if (!demo) {
             try {
                 if (!manager) manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
                 auto next = readMedia(manager, previous);
                 previous = next.key.substr(0, next.key.find(L'\n'));
-                State snapshot;
                 {
                     std::lock_guard lock(gate);
                     if (demo) continue;
-                    if (next.key != state.key) { next.revision = state.revision + 1; state = next; nextFetch = Clock::now(); }
+                    if (next.key != state.key) { next.revision = state.revision + 1; state = next; }
                     else { state.position = next.position; state.duration = next.duration; state.playing = next.playing; state.rate = next.rate; state.sampled = next.sampled; }
-                    snapshot = state;
-                }
-                if (online && !snapshot.key.empty() && snapshot.lines.empty() && Clock::now() >= nextFetch) {
-                    nextFetch = Clock::now() + std::chrono::minutes(2);
-                    try {
-                        auto lines = fetch(snapshot);
-                        std::lock_guard lock(gate);
-                        if (!demo && online && state.key == snapshot.key && state.revision == snapshot.revision) {
-                            state.lines = std::move(lines);
-                            state.status = state.lines.empty() ? L"未找到同步歌词；可右键导入 LRC" : L"LRCLIB 在线歌词";
-                        }
-                    } catch (...) {
-                        std::lock_guard lock(gate);
-                        if (state.key == snapshot.key && state.revision == snapshot.revision) state.status = L"在线歌词暂不可用；可右键导入 LRC";
-                    }
                 }
                 PostMessageW(windowHandle, RefreshMessage, 0, 0);
             } catch (...) {
@@ -208,6 +248,45 @@ void worker() {
     }
     winrt::uninit_apartment();
 }
+void lyricWorker() {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    std::wstring key;
+    unsigned revision = 0;
+    auto nextFetch = Clock::now();
+    while (!stopping) {
+        State snapshot; { std::lock_guard lock(gate); snapshot = state; }
+        if (key != snapshot.key || revision != snapshot.revision) { key = snapshot.key; revision = snapshot.revision; nextFetch = Clock::now(); }
+        if (!demo && online && !key.empty() && snapshot.lines.empty() && Clock::now() >= nextFetch) {
+            { std::lock_guard lock(gate); if (state.key == key && state.revision == revision) state.status = L"正在匹配同步歌词…"; }
+            auto result = fetch(snapshot);
+            std::lock_guard lock(gate);
+            if (!demo && online && state.key == key && state.revision == revision) { state.lines = std::move(result.lines); state.status = result.status; }
+            nextFetch = Clock::now() + std::chrono::seconds(30);
+        }
+        for (int i = 0; i < 5 && !stopping; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    winrt::uninit_apartment();
+}
+void barWorker(std::shared_ptr<BarStore> store) {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    try {
+        auto automation = winrt::create_instance<IUIAutomation>(__uuidof(CUIAutomation8));
+        if (auto version2 = automation.try_as<IUIAutomation2>()) { version2->put_ConnectionTimeout(1000); version2->put_TransactionTimeout(1000); }
+        while (!store->stop) {
+            std::vector<HWND> handles;
+            EnumWindows([](HWND handle, LPARAM parameter) -> BOOL {
+                wchar_t name[128]{}; GetClassNameW(handle, name, 128);
+                if (wcscmp(name, L"Shell_TrayWnd") == 0 || wcscmp(name, L"Shell_SecondaryTrayWnd") == 0) reinterpret_cast<std::vector<HWND>*>(parameter)->push_back(handle);
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&handles));
+            std::vector<BarSnapshot> found;
+            for (const auto handle : handles) { if (store->stop) break; found.push_back(inspectBar(automation.get(), handle)); }
+            { std::lock_guard lock(store->gate); store->bars = std::move(found); }
+            for (int i = 0; i < 10 && !store->stop; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    } catch (...) { /* Hide docked lyrics if the taskbar cannot be read safely. */ }
+    winrt::uninit_apartment();
+}
 void setDemo(bool enabled) {
     std::lock_guard lock(gate);
     demo = enabled;
@@ -216,7 +295,7 @@ void setDemo(bool enabled) {
     if (enabled) {
         state.key = L"demo"; state.title = L"原生歌词演示（模拟数据）"; state.playing = true;
         state.duration = 24; state.status = L"模拟数据";
-        state.lines = lyrics::parse(L"[00:00]原生歌词演示 · 模拟数据\n[00:04]无需安装 .NET 或浏览器运行时\n[00:08]右键导入本地 UTF-8 LRC\n[00:12]支持系统媒体会话与播放进度\n[00:16]这是任务栏上方的悬浮原型\n[00:20]右键关闭演示，读取真实播放器");
+        state.lines = lyrics::parse(L"[00:00]原生歌词演示 · 模拟数据\n[00:04]无需安装 .NET 或浏览器运行时\n[00:08]右键导入本地 UTF-8 LRC\n[00:12]支持系统媒体会话与播放进度\n[00:16]歌词在任务栏空闲区域显示\n[00:20]右键关闭演示，读取真实播放器");
     }
 }
 void addTray() {
@@ -234,6 +313,28 @@ void centerWindow() {
     const int height = MulDiv(68, dpi, 96);
     SetWindowPos(windowHandle, HWND_TOPMOST, monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - width) / 2,
         monitor.rcWork.bottom - height - MulDiv(8, dpi, 96), width, height, SWP_NOACTIVATE);
+}
+void placeWindow() {
+    if (!docked) return;
+    BarSnapshot selected;
+    const auto monitor = MonitorFromWindow(windowHandle, MONITOR_DEFAULTTOPRIMARY);
+    { std::lock_guard lock(barStore->gate); for (const auto& bar : barStore->bars) if (MonitorFromWindow(bar.handle, MONITOR_DEFAULTTOPRIMARY) == monitor) { selected = bar; break; } }
+    RECT live{};
+    if (!selected.reliable || Clock::now() - selected.sampled > std::chrono::seconds(5) || !IsWindowVisible(selected.handle) ||
+        !GetWindowRect(selected.handle, &live) || !EqualRect(&live, &selected.bounds)) { ShowWindow(windowHandle, SW_HIDE); return; }
+    MONITORINFO info{sizeof(info)}; GetMonitorInfoW(monitor, &info);
+    RECT visible{}; IntersectRect(&visible, &live, &info.rcMonitor);
+    const auto dpi = GetDpiForWindow(selected.handle);
+    const int height = std::min(MulDiv(34, dpi, 96), static_cast<int>(visible.bottom - visible.top) - MulDiv(6, dpi, 96));
+    if (height < MulDiv(12, dpi, 96) || live.right - live.left <= live.bottom - live.top) { ShowWindow(windowHandle, SW_HIDE); return; }
+    const auto span = layout::choose(live.left, live.right, (live.left + live.right) / 2 + horizontalOffset,
+        MulDiv(520, dpi, 96), MulDiv(160, dpi, 96), selected.occupied, MulDiv(8, dpi, 96));
+    if (!span) { ShowWindow(windowHandle, SW_HIDE); return; }
+    const auto foreground = GetForegroundWindow(); RECT front{}; wchar_t name[64]{}; GetClassNameW(foreground, name, 64);
+    if (foreground != windowHandle && foreground != selected.handle && wcscmp(name, L"Progman") != 0 && wcscmp(name, L"WorkerW") != 0 &&
+        GetWindowRect(foreground, &front) && front.left <= info.rcMonitor.left && front.top <= info.rcMonitor.top && front.right >= info.rcMonitor.right && front.bottom >= info.rcMonitor.bottom) { ShowWindow(windowHandle, SW_HIDE); return; }
+    SetWindowPos(windowHandle, HWND_TOPMOST, span->start, live.top + (live.bottom - live.top - height) / 2,
+        span->end - span->start, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 void importLrc() {
     State snapshot;
@@ -258,8 +359,11 @@ void importLrc() {
 }
 void menu() {
     HMENU popup = CreatePopupMenu();
+    AppendMenuW(popup, MF_STRING, Details, L"当前歌曲与歌词状态…");
     AppendMenuW(popup, MF_STRING, Import, L"导入当前歌曲的 LRC…");
-    AppendMenuW(popup, MF_STRING | (online ? MF_CHECKED : 0), Online, L"在线匹配（向 LRCLIB 发送歌曲信息）");
+    AppendMenuW(popup, MF_STRING, Retry, L"重新获取歌词");
+    AppendMenuW(popup, MF_STRING | (online ? MF_CHECKED : 0), Online, L"在线匹配（向歌词来源发送歌曲信息）");
+    AppendMenuW(popup, MF_STRING | (docked ? MF_CHECKED : 0), Dock, L"在任务栏空闲区域显示");
     AppendMenuW(popup, MF_STRING | (demo ? MF_CHECKED : 0), Demo, L"演示模式（模拟数据）");
     AppendMenuW(popup, MF_STRING, Center, L"恢复居中");
     AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
@@ -286,26 +390,37 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         auto text = index >= 0 ? snapshot.lines[index].text : snapshot.title;
         if (text.empty()) text = L"Taskbar Lyrics Native · 原型";
         const auto inset = MulDiv(12, GetDpiForWindow(hwnd), 96);
-        RECT top{inset, 0, bounds.right - inset, bounds.bottom * 3 / 5};
+        RECT top{inset, 0, bounds.right - inset, docked ? bounds.bottom : bounds.bottom * 3 / 5};
         DrawTextW(dc, text.c_str(), -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         SetTextColor(dc, RGB(160, 170, 180));
         auto detail = snapshot.status;
         if (!snapshot.title.empty() && !demo) detail = snapshot.title + L" · " + snapshot.artist + L"  |  " + snapshot.status;
         RECT bottom{inset, bounds.bottom * 3 / 5, bounds.right - inset, bounds.bottom};
         SelectObject(dc, GetStockObject(DEFAULT_GUI_FONT));
-        DrawTextW(dc, detail.c_str(), -1, &bottom, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (!docked) DrawTextW(dc, detail.c_str(), -1, &bottom, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         SelectObject(dc, old); EndPaint(hwnd, &paint); return 0;
     }
-    case WM_TIMER: case RefreshMessage: InvalidateRect(hwnd, nullptr, FALSE); return 0;
-    case WM_LBUTTONDOWN: ReleaseCapture(); SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0); return 0;
+    case WM_TIMER: placeWindow(); InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case RefreshMessage: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_LBUTTONDOWN:
+        if (docked) { POINT cursor; GetCursorPos(&cursor); dragStart = cursor.x; dragOffset = horizontalOffset; dragging = true; SetCapture(hwnd); }
+        else { ReleaseCapture(); SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0); } return 0;
+    case WM_MOUSEMOVE: if (dragging) { POINT cursor; GetCursorPos(&cursor); horizontalOffset = dragOffset + cursor.x - dragStart; placeWindow(); } return 0;
+    case WM_LBUTTONUP: dragging = false; ReleaseCapture(); return 0;
+    case WM_CAPTURECHANGED: dragging = false; return 0;
     case WM_CONTEXTMENU: menu(); return 0;
     case TrayMessage: if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONDBLCLK) menu(); return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case Import: importLrc(); break;
+        case Details: { State snapshot; { std::lock_guard lock(gate); snapshot = state; }
+            const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status;
+            MessageBoxW(hwnd, description.c_str(), L"当前歌曲与歌词状态", MB_OK); break; }
         case Online: online = !online; { std::lock_guard lock(gate); ++state.revision; } break;
+        case Retry: { std::lock_guard lock(gate); state.lines.clear(); ++state.revision; } break;
+        case Dock: docked = !docked; if (!docked) { centerWindow(); ShowWindow(hwnd, SW_SHOWNOACTIVATE); } else placeWindow(); break;
         case Demo: setDemo(!demo); break;
-        case Center: centerWindow(); break;
+        case Center: horizontalOffset = 0; centerWindow(); placeWindow(); break;
         case Exit: DestroyWindow(hwnd); break;
         } return 0;
     case WM_DPICHANGED: {
@@ -317,7 +432,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
     }
     case WM_DISPLAYCHANGE: centerWindow(); return 0;
     case WM_DESTROY: {
-        stopping = true; KillTimer(hwnd, 1);
+        stopping = true; barStore->stop = true; KillTimer(hwnd, 1);
         NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = hwnd; data.uID = 1; Shell_NotifyIconW(NIM_DELETE, &data);
         PostQuitMessage(0); return 0;
     }
@@ -333,11 +448,30 @@ int diagnostics(const std::wstring& mode, const std::filesystem::path& path) {
             unsigned count = 0;
             for (const auto& session : manager.GetSessions()) { (void)session; ++count; }
             result = "SMTC OK; session count=" + std::to_string(count) + "\n";
+        } else if (mode == L"--taskbar-probe") {
+            auto automation = winrt::create_instance<IUIAutomation>(__uuidof(CUIAutomation8));
+            auto bar = inspectBar(automation.get(), FindWindowW(L"Shell_TrayWnd", nullptr));
+            const auto dpi = GetDpiForWindow(bar.handle);
+            auto span = layout::choose(bar.bounds.left, bar.bounds.right, (bar.bounds.left + bar.bounds.right) / 2,
+                MulDiv(520, dpi, 96), MulDiv(160, dpi, 96), bar.occupied, MulDiv(8, dpi, 96));
+            result = "{\"reliable\":" + std::string(bar.reliable ? "true" : "false") + ",\"occupied\":[";
+            for (size_t i = 0; i < bar.occupied.size(); ++i) {
+                if (i) result += ',';
+                result += "[" + std::to_string(bar.occupied[i].start) + "," + std::to_string(bar.occupied[i].end) + "]";
+            }
+            result += "],\"slot\":" + (span ? "[" + std::to_string(span->start) + "," + std::to_string(span->end) + "]" : std::string("null")) + "}\n";
         } else {
             State track; track.title = L"Hello"; track.artist = L"Adele"; track.album = L"25"; track.duration = 295;
-            const auto lines = fetch(track);
-            result = "LRCLIB synchronized line count=" + std::to_string(lines.size()) + "\n";
-            if (lines.empty()) throw std::runtime_error("No synchronized lyrics from LRCLIB");
+            if (mode == L"--superstar-check") { track.title = L"Super Star"; track.artist = L"S.H.E"; track.album = L"Super Star"; track.duration = 196; }
+            if (mode == L"--current-check") {
+                const auto manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
+                track = readMedia(manager, L"");
+                if (track.key.empty()) { std::ofstream(path) << "No supported media session\n"; return 2; }
+                result = "Current track=" + winrt::to_string(track.title) + "; artist=" + winrt::to_string(track.artist) + "; album=" + winrt::to_string(track.album) + "; duration=" + std::to_string(track.duration) + "\n";
+            }
+            const auto lyrics = fetch(track);
+            result += "Synchronized line count=" + std::to_string(lyrics.lines.size()) + "; " + winrt::to_string(lyrics.status) + "\n";
+            if (lyrics.lines.empty()) { std::ofstream(path) << result; return 2; }
         }
         std::ofstream output(path); output << result;
         return output ? 0 : 1;
@@ -353,11 +487,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     std::vector<std::wstring> args;
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
     LocalFree(argv);
-    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check")) return diagnostics(args[0], args[1]);
+    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check")) return diagnostics(args[0], args[1]);
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarLyrics.Native.Prototype");
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(mutex); return 0; }
     online = std::find(args.begin(), args.end(), L"--offline") == args.end();
+    docked = std::find(args.begin(), args.end(), L"--floating") == args.end();
     if (std::find(args.begin(), args.end(), L"--demo") != args.end()) setDemo(true);
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     WNDCLASSW wc{}; wc.lpfnWndProc = procedure; wc.hInstance = instance; wc.lpszClassName = L"TaskbarLyricsNative";
@@ -370,11 +505,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     const auto dpi = GetDpiForWindow(windowHandle);
     font = CreateFontW(-MulDiv(19, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
-    centerWindow(); addTray(); SetTimer(windowHandle, 1, 200, nullptr); ShowWindow(windowHandle, SW_SHOWNOACTIVATE);
+    centerWindow(); addTray(); SetTimer(windowHandle, 1, 200, nullptr); if (!docked) ShowWindow(windowHandle, SW_SHOWNOACTIVATE);
     std::thread background(worker);
+    std::thread lyricsBackground(lyricWorker);
+    // Explorer UIA providers may block indefinitely. The inspector owns its heap state;
+    // it must never hold up UI shutdown or access destroyed application globals.
+    std::thread taskbarBackground(barWorker, barStore);
+    taskbarBackground.detach();
     MSG message;
     while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
-    stopping = true; background.join();
+    stopping = true; background.join(); lyricsBackground.join();
     if (font) DeleteObject(font);
     CloseHandle(mutex);
     return 0;
