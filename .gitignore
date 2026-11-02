@@ -5,3 +5,4 @@ artifacts/
 *.user
 *.tmp.ps1
 *.local.json
+codex_tmp/
