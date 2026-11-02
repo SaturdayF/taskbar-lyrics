@@ -16,4 +16,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: TaskbarLyrics-win-x64
-          path: artifacts/TaskbarLyrics-v0.1.0-win-x64.zip
+          path: artifacts/TaskbarLyrics-v0.2.0-win-x64.zip

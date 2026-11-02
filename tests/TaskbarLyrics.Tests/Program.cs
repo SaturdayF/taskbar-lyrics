@@ -35,6 +35,22 @@ try
     catch (FormatException) { Check(true, "reject unsynchronized import"); }
 }
 finally { Directory.Delete(folder, true); }
+var centered = TaskbarLayout.Calculate(0, 1032, 1920, 48, 0)!;
+Check(centered.Left + centered.Width / 2 == 960, "lyric bar horizontally centered by default");
+Check(centered.Top + centered.Height / 2 == 1056, "lyric bar vertically centered in taskbar");
+var moved = TaskbarLayout.Calculate(0, 1032, 1920, 48, 220)!;
+Check(moved.Left - centered.Left == 220 && moved.Top == centered.Top, "horizontal movement preserves vertical position");
+var leftEdge = TaskbarLayout.Calculate(-1920, -48, 1920, 48, -100000)!;
+var rightEdge = TaskbarLayout.Calculate(-1920, -48, 1920, 48, 100000)!;
+Check(leftEdge.Left == -1912 && rightEdge.Left + rightEdge.Width == -8, "both horizontal edges clamped on negative origin monitor");
+Check(leftEdge.Top == rightEdge.Top, "vertical anchor unaffected by extreme drag offsets");
+var compact = TaskbarLayout.Calculate(0, 0, 400, 24, 0)!;
+Check(compact.Width <= 384 && compact.Height <= 18 && compact.Top == 3, "small taskbar sizing stays within bar");
+Check(TaskbarLayout.Calculate(0, 1078, 1920, 2, 0) is null, "hidden taskbar does not expose floating lyrics");
+Check(TaskbarLayout.Calculate(0, 0, 48, 1080, 0) is null, "vertical taskbar does not produce a free floating window");
+Check(TaskbarLayout.Calculate(0, 0, 1920, 48, double.NaN)!.Offset == 0, "invalid saved offset returns to center");
+var resized = TaskbarLayout.Calculate(0, 1032, 1280, 48, 100000)!;
+Check(resized.Left + resized.Width <= 1272, "display resize clamps stored offset");
 Console.WriteLine($"{passed} checks passed.");
 if (args.Contains("--smoke"))
 {
