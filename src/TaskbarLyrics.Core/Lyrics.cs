@@ -8,6 +8,9 @@ namespace TaskbarLyrics.Core;
 public enum PlayerKind { Auto, QQMusic, NetEase, AppleMusic }
 public sealed record Track(PlayerKind Player, string Title, string Artist, string Album, double Duration)
 {
+    // SMTC can briefly omit duration. Calibration stays attached to the recording.
+    public string SyncKey => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+        $"{Player}\n{TrackMatch.Normalize(Title)}\n{TrackMatch.Normalize(Artist)}\n{TrackMatch.Normalize(Album)}")));
     public string Key => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{Player}\n{Title}\n{Artist}\n{Album}\n{Math.Round(Duration)}")));
 }

@@ -33,16 +33,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native tests build failed.' }
     & "$build/native-tests.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Native checks failed.' }
+    $check = Start-Process -FilePath "$out/TaskbarLyrics.Native.exe" -ArgumentList '--preferences-check', "`"$build/preferences-check.txt`"" -WindowStyle Hidden -Wait -PassThru
+    if ($check.ExitCode -ne 0) { throw 'Native preferences persistence check failed.' }
+    Get-Content "$build/preferences-check.txt"
     & "$(Split-Path $compiler)/dumpbin.exe" /nologo /dependents "$out/TaskbarLyrics.Native.exe" | Set-Content "$build/dependencies.txt"
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inspection failed.' }
     Copy-Item "$root/native/README.md" "$out/README.md"
     Copy-Item "$root/LICENSE" "$out/LICENSE"
-    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.1.2-prototype-win-x64.zip" -Force
+    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip" -Force
     if ($Iscc) {
         & $Iscc "$root/native/installer.iss"
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
-    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.1.2-prototype-win-x64.zip" | Select-Object FullName,Length
+    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip" | Select-Object FullName,Length
 } finally {
     Pop-Location
     $env:PATH = $savedPath

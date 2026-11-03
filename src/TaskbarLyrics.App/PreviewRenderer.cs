@@ -24,14 +24,18 @@ internal static class PreviewRenderer
             "演示歌曲", "Taskbar Lyrics", "界面预览", 240), 82, true, 1, "preview"), "演示来源 · 非真实播放", "演示数据", 82, true);
         Capture(window, "overview.png");
         window.SelectPage(1); Capture(window, "appearance.png");
+        ((System.Windows.Controls.ScrollViewer)window.FindName("PageScroll")).ScrollToBottom();
+        Capture(window, "calibration.png");
         window.SelectPage(2); Capture(window, "sources.png");
         window.Width = 840; window.Height = 660;
         window.SelectPage(1); Capture(window, "appearance-compact.png");
+        ((System.Windows.Controls.ScrollViewer)window.FindName("PageScroll")).ScrollToBottom();
+        Capture(window, "calibration-compact.png");
         window.Close();
         // Reopen the same settings to cover the previous logical-parent regression.
         var reopened = new SettingsWindow(preferences, _ => { }, () => { }, () => { }, () => { }, () => { });
         reopened.Measure(new Size(960, 760)); reopened.Close();
-        File.WriteAllText(Path.Combine(directory, "result.txt"), "Rendered four previews and reopened settings successfully. Embedded brand image and 32 px tray icon loaded.");
+        File.WriteAllText(Path.Combine(directory, "result.txt"), "Rendered six previews and reopened settings successfully. Embedded brand image and 32 px tray icon loaded.");
         void Capture(Window target, string name)
         {
             target.UpdateLayout();

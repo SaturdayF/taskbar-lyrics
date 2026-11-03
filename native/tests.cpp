@@ -1,5 +1,6 @@
 #include "lyrics.h"
 #include "layout.h"
+#include "preferences.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -25,7 +26,19 @@ int main() {
         const auto first = layout::choose(0, 800, 375, 520, 160, {{0, 200}, {600, 800}}, 8, true);
         const auto last = layout::choose(0, 800, 425, 520, 160, {{0, 200}, {600, 800}}, 8, true);
         check(first && last && first->start < last->start && last->end <= 592, "drag inside a lane narrower than the default width");
-        std::cout << "PASS: 8 LRC and 5 taskbar layout checks\n";
+        preferences::Settings preferences;
+        preferences.setTrackOffset(L"song A", 1.5); preferences.globalOffset = -.5;
+        check(preferences.effectiveOffset(L"song A") == 1 && preferences.effectiveOffset(L"song B") == -.5, "track calibration isolated and added to global");
+        preferences.setTrackOffset(L"song A", 100);
+        check(preferences.trackOffset(L"song A") == 10, "offset clamped");
+        preferences.setTrackOffset(L"song A", 0);
+        check(preferences.trackOffsets.empty(), "reset removes calibration");
+        check(!preferences.shouldHide(false), "auto hide opt in");
+        preferences.hideWhenPaused = true;
+        check(preferences.shouldHide(false) && !preferences.shouldHide(true), "pause hides and play restores");
+        check(preferences::copyableLine(lines, .59).empty() && preferences::copyableLine(lines, .6) == L"第一行", "copy only a timestamped current lyric");
+        check(preferences::copyableLine(lyrics::parse(L"[00:00]song\n[00:02]"), 3).empty(), "do not copy instrumental placeholder");
+        std::cout << "PASS: 8 LRC, 5 taskbar layout and 7 preference checks\n";
         return 0;
     } catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 1; }
 }

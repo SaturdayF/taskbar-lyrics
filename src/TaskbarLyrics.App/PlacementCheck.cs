@@ -26,7 +26,8 @@ internal static class PlacementCheck
                     (r.Right - bar.Bounds.Left) / bar.Scale)).ToArray();
                 var layout = TaskbarLayout.Calculate(0, 0, bar.Bounds.Width / bar.Scale, bar.Bounds.Height / bar.Scale, 0, spans, true);
                 if (layout is null) { reports.Add(new { bar.Device, bar.Scale, Hidden = true, Reason = "No free lane" }); continue; }
-                var overlay = new LyricOverlay(new Settings(), (_, _, _) => { }, () => { }, () => { }, () => { }, () => { }, () => { });
+                var settings = new Settings();
+                var overlay = new LyricOverlay(settings, (_, _, _) => { }, () => { }, () => { }, () => { }, () => { }, () => { });
                 try
                 {
                     overlay.Show(); overlay.Update("图标避让验证 · 模拟文字", "位置验证", true); overlay.Place(bar, layout);
@@ -41,9 +42,13 @@ internal static class PlacementCheck
                     var hidden = !NativeTaskbar.IsWindowVisible(handle);
                     overlay.Place(bar, layout);
                     var restored = NativeTaskbar.IsWindowVisible(handle);
-                    success &= !overlaps && centeredY && hidden && restored;
+                    settings.Lyrics.ClickThrough = true; overlay.Update("鼠标穿透验证", "", true);
+                    var through = (NativeTaskbar.GetWindowLongPtr(handle, -20) & 0x20) != 0 && !overlay.IsHitTestVisible;
+                    settings.Lyrics.ClickThrough = false; overlay.Update("恢复交互验证", "", true);
+                    var interactive = (NativeTaskbar.GetWindowLongPtr(handle, -20) & 0x20) == 0 && overlay.IsHitTestVisible;
+                    success &= !overlaps && centeredY && hidden && restored && through && interactive;
                     reports.Add(new { bar.Device, bar.Scale, Actual = actual, Overlaps = overlaps, VerticalCenter = centeredY,
-                        HiddenWhenUnavailable = hidden, Restored = restored });
+                        HiddenWhenUnavailable = hidden, Restored = restored, ClickThrough = through, InteractionRestored = interactive });
                 }
                 finally { overlay.Close(); }
             }

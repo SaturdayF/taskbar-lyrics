@@ -24,6 +24,25 @@ Check(!TrackMatch.Accept(track, "Hello (Live)", ["Adele"], 295), "reject live ve
 Check(!TrackMatch.Accept(track, "Hello", ["Adele"], 315), "reject wrong duration");
 Check(!TrackMatch.Accept(track with { Artist = "" }, "Hello", [""], 295), "reject unknown performer");
 Check(track.Key == (track with { }).Key && track.Key != (track with { Album = "Other" }).Key, "stable per recording cache key");
+var preferences = new LyricPreferences();
+preferences.SetTrackOffset(track, 1.5);
+Check(preferences.TrackOffset(track with { Duration = 0 }) == 1.5, "calibration survives missing SMTC duration");
+Check(preferences.TrackOffset(track with { Album = "Live" }) == 0 && preferences.TrackOffset(track with { Artist = "Other" }) == 0,
+    "calibration does not leak to another recording or artist");
+Check(preferences.EffectiveOffset(track, -.5) == 1 && preferences.EffectiveOffset(null, -.5) == -.5, "track and global calibration combine");
+preferences.SetTrackOffset(track, 100);
+Check(preferences.TrackOffset(track) == 10 && LyricPreferences.ClampOffset(double.NaN) == 0, "calibration bounds and invalid values");
+var savedPreferences = System.Text.Json.JsonSerializer.Serialize(preferences);
+preferences = System.Text.Json.JsonSerializer.Deserialize<LyricPreferences>(savedPreferences)!;
+Check(preferences.TrackOffset(track) == 10, "calibration survives settings serialization");
+preferences.SetTrackOffset(track, 0);
+Check(preferences.TrackOffsets.Count == 0, "reset removes only the single track entry");
+Check(!preferences.ShouldHide(false), "pause hiding is opt in");
+preferences.HideWhenPaused = true;
+Check(preferences.ShouldHide(false) && !preferences.ShouldHide(true), "pause hides and playback restores");
+Check(LyricPreferences.CopyableLine(lines, -1) is null && LyricPreferences.CopyableLine(lines, 4) is null,
+    "copy excludes intro and instrumental placeholders");
+Check(LyricPreferences.CopyableLine(lines, 1) == "第二句", "copy uses the synchronized lyric");
 var folder = Path.Combine(Path.GetTempPath(), "TaskbarLyrics-test-" + Guid.NewGuid());
 try
 {

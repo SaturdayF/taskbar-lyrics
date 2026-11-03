@@ -12,7 +12,7 @@ public sealed class LyricService : IDisposable
     {
         this.folder = folder;
         Directory.CreateDirectory(folder);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("TaskbarLyrics/0.3.1");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("TaskbarLyrics/0.4.0");
     }
     public string LocalPath(Track track) => Path.Combine(folder, track.Key + ".lrc");
     public void Import(Track track, string lrc)

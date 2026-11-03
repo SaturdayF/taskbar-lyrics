@@ -1,4 +1,4 @@
-# Taskbar Lyrics Native · 0.1.2 原型
+# Taskbar Lyrics Native · 0.2.0 原型
 
 这是与原 C# 版本并存的 C++ 原型，尚未完整迁移原版功能。
 
@@ -16,6 +16,10 @@
 
 - 默认向 LRCLIB 发送歌名、歌手、专辑和时长。精确匹配失败后搜索候选，优先使用同专辑结果，仍校验歌名、歌手及可用时长。
 - 右键歌词或托盘图标，可对当前播放器执行上一首、播放或暂停、下一首。菜单根据播放器报告的可用操作启用。
+- 右键菜单可复制当前同步歌词，前奏或空白间奏不复制占位文本。
+- 单曲与全局时间校准各支持 ±10 秒，叠加生效；正值使歌词提前出现，不改变播放进度。`Ctrl + 滚轮` 调整单曲，`Ctrl + Shift + 滚轮` 调整全局，每格 0.5 秒；菜单可重置。
+- 可选暂停或无播放时隐藏，播放恢复后自动显示；可选鼠标穿透，开启后从托盘菜单取消以恢复拖动、滚轮和右键。
+- 时间校准、暂停隐藏及鼠标穿透保存到 `%LOCALAPPDATA%\TaskbarLyrics\Native\settings.json`；单曲以播放器、歌名、歌手和专辑区分。演示模式不读取或保存正式设置。
 - LRCLIB 失败后，回退网易公开歌曲/歌词接口（发送歌名、歌手及匹配歌曲 ID）。约 30 秒后重试，菜单也可手动重试。来源收录及网络状态仍会影响可用性。
 - 菜单可关闭在线匹配；`--offline` 在启动时禁止在线匹配。已发出的请求无法撤回。
 - 菜单可导入当前歌曲的 UTF-8 LRC（最大 2 MB）；仅当前会话有效，切歌或退出后不保存。
@@ -23,7 +27,7 @@
 - 菜单可查看当前歌曲和匹配状态、重新获取、恢复居中、退出。没有自动启动项。
 - `--floating` 启动时使用悬浮模式；`--demo --offline --floating` 可在没有任务栏空间时查看演示。
 
-尚未迁移：原版设置页、QQ 歌词源、持久化缓存/设置、时间偏移、每屏位置、同时在全部屏幕显示。
+尚未迁移：原版设置页、QQ 歌词源、持久化歌词缓存、在线及停靠开关的保存、每屏位置、同时在全部屏幕显示。
 原型采用 GDI 系统字体绘制，以验证媒体、歌词和部署路径；最终排版可迁移至 DirectWrite。
 媒体轮询、在线匹配和任务栏读取分别运行。切歌会丢弃旧歌的请求结果，但同步网络请求尚不能立即取消，下一首的歌词获取可能等待旧请求超时。
 多屏混合 DPI、自动隐藏和不同系统版本的任务栏仍需进一步实机验证。
@@ -47,6 +51,10 @@
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --current-check .\codex_tmp\current-check.txt
 # 任务栏内位置、图标避让、窗口响应和退出检查：
 .\scripts\check-native.ps1 -Docked
+# 使用离线演示验证鼠标穿透、透明标志、暂停隐藏及恢复，不控制真实播放器：
+.\scripts\check-native.ps1 -Docked -Interactions
+# Unicode 单曲校准与设置文件读写检查，不改动正式设置：
+.\artifacts\native-win-x64\TaskbarLyrics.Native.exe --preferences-check .\codex_tmp\preferences-check.txt
 ```
 
 输出：`artifacts/native-win-x64/TaskbarLyrics.Native.exe`、便携 ZIP，以及启用 Inno Setup 时的 `artifacts/*setup-x64.exe`。

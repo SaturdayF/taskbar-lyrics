@@ -15,6 +15,7 @@ public partial class SettingsWindow : Window
     private readonly Action import, refresh, center, exit;
     private bool ready;
     private bool updatingDisplays;
+    private Track? currentTrack;
     private DisplayOption[] displayOptions = [];
     public SettingsWindow(Settings settings, Action<bool> changed, Action import, Action refresh, Action center, Action exit)
     {
@@ -26,6 +27,8 @@ public partial class SettingsWindow : Window
         LockedToggle.IsChecked = settings.Locked; OnlineToggle.IsChecked = settings.Online;
         DisplayModes.SelectedIndex = (int)settings.DisplayMode;
         AvoidIconsToggle.IsChecked = settings.AvoidIcons;
+        HidePausedToggle.IsChecked = settings.Lyrics.HideWhenPaused;
+        ThroughToggle.IsChecked = settings.Lyrics.ClickThrough;
         UpdateDisplays(TaskbarInspector.Displays());
         ready = true;
         UpdateValues(); SelectPage(0);
@@ -37,6 +40,7 @@ public partial class SettingsWindow : Window
     }
     public void UpdatePlayback(string line, Playback? playback, string? source, string status, double position, bool demo)
     {
+        currentTrack = playback?.Track;
         CurrentLyric.Text = playback is null ? "音乐响起，歌词就会在这里。" : line;
         AppearanceLyric.Text = playback is null ? "音乐在播放，歌词在身旁" : line;
         TrackTitle.Text = playback?.Track.Title ?? "尚未播放歌曲";
@@ -52,8 +56,15 @@ public partial class SettingsWindow : Window
     }
     private void UpdateValues()
     {
+        var wasReady = ready; ready = false;
+        OffsetSlider.Value = settings.Offset;
+        HidePausedToggle.IsChecked = settings.Lyrics.HideWhenPaused;
+        ThroughToggle.IsChecked = settings.Lyrics.ClickThrough;
+        ready = wasReady;
         FontValue.Text = $"{settings.FontSize:0} px";
         OffsetValue.Text = $"{settings.Offset:+0.0;-0.0;0.0} 秒";
+        TrackOffsetValue.Text = currentTrack is null ? "播放歌曲后可校准" : $"{settings.Lyrics.TrackOffset(currentTrack):+0.0;-0.0;0.0} 秒";
+        TrackCalibration.IsEnabled = currentTrack is not null;
         AppearanceLyric.FontSize = settings.FontSize;
         PlacementText.Text = "各屏独立记忆 · 仅支持左右拖动 · 高度固定";
     }
@@ -101,6 +112,15 @@ public partial class SettingsWindow : Window
     private void Locked_Click(object sender, RoutedEventArgs e) { settings.Locked = LockedToggle.IsChecked == true; changed(false); }
     private void Online_Click(object sender, RoutedEventArgs e) { settings.Online = OnlineToggle.IsChecked == true; changed(true); }
     private void AvoidIcons_Click(object sender, RoutedEventArgs e) { settings.AvoidIcons = AvoidIconsToggle.IsChecked == true; changed(false); }
+    private void HidePaused_Click(object sender, RoutedEventArgs e) { settings.Lyrics.HideWhenPaused = HidePausedToggle.IsChecked == true; changed(false); }
+    private void Through_Click(object sender, RoutedEventArgs e) { settings.Lyrics.ClickThrough = ThroughToggle.IsChecked == true; changed(false); }
+    private void TrackOffset_Click(object sender, RoutedEventArgs e)
+    {
+        if (currentTrack is null) return;
+        var tag = (string)((Button)sender).Tag;
+        var value = tag == "reset" ? 0 : settings.Lyrics.TrackOffset(currentTrack) + double.Parse(tag, CultureInfo.InvariantCulture);
+        settings.Lyrics.SetTrackOffset(currentTrack, value); UpdateValues(); changed(false);
+    }
     private void DisplayMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!ready) return;

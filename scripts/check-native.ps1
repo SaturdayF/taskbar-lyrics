@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = '', [string]$Executable = '', [switch]$Docked)
+param([string]$OutputDirectory = '', [string]$Executable = '', [switch]$Docked, [switch]$Interactions)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 if (!$Executable) { $Executable = "$root/artifacts/native-win-x64/TaskbarLyrics.Native.exe" }
@@ -20,6 +20,9 @@ public static class NativePrototypeCheck {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
     [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wp, IntPtr lp, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr window, uint message, IntPtr wp, IntPtr lp);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindowLongPtrW(IntPtr window, int index);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] public static extern bool GetLayeredWindowAttributes(IntPtr window, out uint key, out byte alpha, out uint flags);
 }
 '@
 }
@@ -62,8 +65,30 @@ try {
     finally { $graphics.ReleaseHdc($dc); $graphics.Dispose() }
     try { $bitmap.Save("$OutputDirectory/native-preview.png", [System.Drawing.Imaging.ImageFormat]::Png) }
     finally { $bitmap.Dispose() }
+    if ($Interactions) {
+        function Send-DemoCommand([int]$Command) {
+            $reply = [IntPtr]::Zero
+            if ([NativePrototypeCheck]::SendMessageTimeout($window, 0x111, [IntPtr]::new($Command), [IntPtr]::Zero, 2, 5000, [ref]$reply) -eq [IntPtr]::Zero) { throw "Demo command $Command failed." }
+        }
+        $key = [uint32]0; $alpha = [byte]0; $flags = [uint32]0
+        if (![NativePrototypeCheck]::GetLayeredWindowAttributes($window, [ref]$key, [ref]$alpha, [ref]$flags) -or ($flags -band 1) -eq 0) { throw 'Transparent color key missing.' }
+        Send-DemoCommand 113
+        if (([NativePrototypeCheck]::GetWindowLongPtrW($window, -20).ToInt64() -band 0x20) -eq 0) { throw 'Mouse pass through not enabled.' }
+        Send-DemoCommand 113
+        if (([NativePrototypeCheck]::GetWindowLongPtrW($window, -20).ToInt64() -band 0x20) -ne 0) { throw 'Mouse interaction not restored.' }
+        Send-DemoCommand 112
+        Send-DemoCommand 109
+        Start-Sleep -Milliseconds 600
+        if ([NativePrototypeCheck]::IsWindowVisible($window)) { throw 'Paused lyrics not hidden.' }
+        Start-Sleep -Milliseconds 500
+        if ([NativePrototypeCheck]::IsWindowVisible($window)) { throw 'Timer incorrectly restored paused lyrics.' }
+        Send-DemoCommand 109
+        Start-Sleep -Milliseconds 600
+        if (![NativePrototypeCheck]::IsWindowVisible($window)) { throw 'Playing lyrics not restored.' }
+        Send-DemoCommand 112
+    }
     $process.Refresh()
-    $report = "PASS: demo window created and responsive; docked=$Docked; bounds=$($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top); workingSetBytes=$($process.WorkingSet64)"
+    $report = "PASS: demo window created and responsive; docked=$Docked; interactions=$Interactions; bounds=$($rect.Right - $rect.Left)x$($rect.Bottom - $rect.Top); workingSetBytes=$($process.WorkingSet64)"
     $report | Set-Content "$OutputDirectory/native-window-check.txt"
     Write-Output $report
 } finally {

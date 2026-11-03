@@ -34,7 +34,7 @@
             <DockPanel Grid.Row="1" Margin="12,26,12,0">
                 <StackPanel DockPanel.Dock="Bottom" Margin="8,0,8,18">
                     <TextBlock Text="在音乐里，保持专注。" Foreground="#AAAAAA" FontSize="11" Margin="0,0,0,8"/>
-                    <TextBlock Text="Taskbar Lyrics  0.3.1" Foreground="#777777" FontSize="11"/>
+                    <TextBlock Text="Taskbar Lyrics  0.4.0" Foreground="#777777" FontSize="11"/>
                 </StackPanel>
                 <StackPanel>
                     <TextBlock Text="工作区" Foreground="#8D8D8D" FontSize="11" Margin="12,0,0,10"/>
@@ -99,8 +99,15 @@
                                 <DockPanel Margin="0,0,0,8"><Button DockPanel.Dock="Right" Content="恢复居中" Click="Center_Click" Padding="12,6" HorizontalAlignment="Right"/><StackPanel><TextBlock Text="水平位置" FontWeight="Medium"/><TextBlock x:Name="PlacementText" Text="居中 · 仅支持左右拖动" Foreground="#AAAAAA" FontSize="12" Margin="0,5,0,0"/></StackPanel></DockPanel>
                                 <TextBlock Text="拖动任务栏中的歌词，可沿任务栏左右调整；上下位置保持不变。" Style="{StaticResource Hint}" FontSize="12" Margin="0,5,0,18"/>
                                 <DockPanel><CheckBox x:Name="LockedToggle" DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right" Click="Locked_Click" AutomationProperties.Name="锁定歌词位置"/><StackPanel><TextBlock Text="锁定歌词位置" FontWeight="Medium"/><TextBlock Text="避免误拖动，仍可双击打开设置" Foreground="#AAAAAA" FontSize="12" Margin="0,5,0,0"/></StackPanel></DockPanel>
+                                <DockPanel Margin="0,18,0,0"><CheckBox x:Name="ThroughToggle" DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right" Click="Through_Click" AutomationProperties.Name="鼠标穿透"/><StackPanel><TextBlock Text="鼠标穿透" FontWeight="Medium"/><TextBlock Text="点击直接交给下方任务栏；从托盘或此处关闭后可拖动" Style="{StaticResource Hint}" FontSize="12" Margin="0,5,0,0"/></StackPanel></DockPanel>
+                                <DockPanel Margin="0,18,0,0"><CheckBox x:Name="HidePausedToggle" DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right" Click="HidePaused_Click" AutomationProperties.Name="暂停或无播放时隐藏"/><StackPanel><TextBlock Text="暂停或无播放时隐藏" FontWeight="Medium"/><TextBlock Text="播放恢复后自动显示；可从托盘控制播放" Style="{StaticResource Hint}" FontSize="12" Margin="0,5,0,0"/></StackPanel></DockPanel>
                                 <Border Height="1" Background="#3A3A3A" Margin="0,18,0,18"/>
-                                <DockPanel><TextBlock x:Name="OffsetValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="#BBBBBB"/><TextBlock Text="歌词时间微调" FontWeight="Medium"/></DockPanel><TextBlock Text="歌词慢了就向右调，快了就向左调。" Style="{StaticResource Hint}" FontSize="12" Margin="0,6,0,8"/><Slider x:Name="OffsetSlider" Minimum="-10" Maximum="10" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Offset_Changed" AutomationProperties.Name="歌词时间调整"/>
+                                <DockPanel><TextBlock x:Name="OffsetValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="#BBBBBB"/><TextBlock Text="全局歌词校准" FontWeight="Medium"/></DockPanel><TextBlock Text="影响所有歌曲。歌词慢了就向右调，快了就向左调。" Style="{StaticResource Hint}" FontSize="12" Margin="0,6,0,8"/><Slider x:Name="OffsetSlider" Minimum="-10" Maximum="10" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="Offset_Changed" AutomationProperties.Name="全局歌词时间调整"/>
+                                <Border Height="1" Background="#3A3A3A" Margin="0,18,0,18"/>
+                                <DockPanel><TextBlock x:Name="TrackOffsetValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="#BBBBBB"/><TextBlock Text="当前歌曲校准" FontWeight="Medium"/></DockPanel>
+                                <TextBlock Text="仅用于当前录音，与全局校准叠加，切歌和重启后保留。正值让歌词提前出现。" Style="{StaticResource Hint}" FontSize="12" Margin="0,6,0,12"/>
+                                <WrapPanel x:Name="TrackCalibration"><Button Content="提前 0.5 秒" Tag="0.5" Click="TrackOffset_Click" Margin="0,0,8,8"/><Button Content="延后 0.5 秒" Tag="-0.5" Click="TrackOffset_Click" Margin="0,0,8,8"/><Button Content="重置单曲" Tag="reset" Click="TrackOffset_Click" Margin="0,0,0,8"/></WrapPanel>
+                                <TextBlock Text="歌词栏上 Ctrl + 滚轮校准单曲；Ctrl + Shift + 滚轮校准全局。右键可复制当前歌词。" Style="{StaticResource Hint}" FontSize="12"/>
                             </StackPanel>
                         </Border>
                     </StackPanel>

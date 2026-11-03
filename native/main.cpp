@@ -4,6 +4,7 @@
 #include <objbase.h>
 #include <UIAutomation.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <commdlg.h>
 #include <winhttp.h>
 #include <winrt/Windows.Foundation.h>
@@ -13,12 +14,14 @@
 #include <atomic>
 #include <chrono>
 #include <cwctype>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <thread>
 #include "lyrics.h"
 #include "taskbar.h"
+#include "preferences-store.h"
 
 using namespace winrt::Windows::Media::Control;
 using namespace winrt::Windows::Data::Json;
@@ -27,6 +30,8 @@ constexpr UINT TrayMessage = WM_APP + 1;
 constexpr UINT RefreshMessage = WM_APP + 2;
 constexpr UINT Import = 100, Online = 101, Demo = 102, Center = 103, Exit = 104, Dock = 105, Retry = 106, Details = 107;
 constexpr UINT PreviousTrack = 108, PlayPause = 109, NextTrack = 110;
+constexpr UINT CopyLine = 111, HidePaused = 112, ClickThrough = 113, Earlier = 114, Later = 115, ResetOffset = 116;
+constexpr UINT GlobalEarlier = 117, GlobalLater = 118, GlobalReset = 119;
 constexpr COLORREF TransparentKey = RGB(0, 0, 0);
 constexpr size_t MaxBody = 2 * 1024 * 1024;
 struct State {
@@ -46,11 +51,61 @@ bool docked = true;
 int horizontalOffset = 0, dragStart = 0, dragOffset = 0;
 bool dragging = false;
 bool manuallyPlaced = false;
+preferences::Settings preferencesState;
+std::filesystem::path preferencesPath;
+std::wstring preferencesStatus;
 struct BarStore { std::mutex gate; std::vector<BarSnapshot> bars; std::atomic<bool> stop{false}; };
 auto barStore = std::make_shared<BarStore>();
 HWND windowHandle = nullptr;
 HFONT font = nullptr;
 UINT taskbarCreated = 0;
+
+void savePreferences() {
+    if (demo || preferencesPath.empty()) return;
+    try { preferences::save(preferencesState, preferencesPath); preferencesStatus.clear(); }
+    catch (...) {
+        preferencesStatus = L"设置保存失败，请检查应用数据目录是否可写。";
+        NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = windowHandle; data.uID = 1; data.uFlags = NIF_INFO;
+        wcscpy_s(data.szInfoTitle, L"Taskbar Lyrics"); wcscpy_s(data.szInfo, preferencesStatus.c_str()); data.dwInfoFlags = NIIF_WARNING;
+        Shell_NotifyIconW(NIM_MODIFY, &data);
+    }
+}
+double lyricPosition(const State& snapshot) {
+    double position = snapshot.position + (snapshot.playing ? std::chrono::duration<double>(Clock::now() - snapshot.sampled).count() * snapshot.rate : 0);
+    if (demo) position = std::fmod(std::max(0.0, position), 24.0);
+    else if (snapshot.duration > 0) position = std::min(position, snapshot.duration);
+    return position + preferencesState.effectiveOffset(snapshot.key);
+}
+void adjustOffset(double delta, bool global, bool reset = false) {
+    if (global) preferencesState.globalOffset = reset ? 0 : preferences::clamp(std::round((preferencesState.globalOffset + delta) * 10) / 10);
+    else {
+        std::lock_guard lock(gate);
+        preferencesState.setTrackOffset(state.key, reset ? 0 : std::round((preferencesState.trackOffset(state.key) + delta) * 10) / 10);
+    }
+    savePreferences(); InvalidateRect(windowHandle, nullptr, FALSE);
+}
+void updateInput() {
+    if (preferencesState.clickThrough && dragging) { dragging = false; ReleaseCapture(); }
+    const auto style = GetWindowLongPtrW(windowHandle, GWL_EXSTYLE);
+    SetWindowLongPtrW(windowHandle, GWL_EXSTYLE, preferencesState.clickThrough ? style | WS_EX_TRANSPARENT : style & ~WS_EX_TRANSPARENT);
+    InvalidateRect(windowHandle, nullptr, FALSE);
+}
+void copyLine() {
+    State snapshot; { std::lock_guard lock(gate); snapshot = state; }
+    const auto text = preferences::copyableLine(snapshot.lines, lyricPosition(snapshot));
+    if (text.empty()) return;
+    const auto bytes = (text.size() + 1) * sizeof(wchar_t);
+    const auto memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (!memory) return;
+    auto destination = GlobalLock(memory);
+    if (!destination) { GlobalFree(memory); return; }
+    std::memcpy(destination, text.c_str(), bytes); GlobalUnlock(memory);
+    if (!OpenClipboard(windowHandle)) {
+        GlobalFree(memory); MessageBoxW(windowHandle, L"剪贴板正忙，请稍后重试。", L"复制歌词", MB_OK); return;
+    }
+    if (!EmptyClipboard() || !SetClipboardData(CF_UNICODETEXT, memory)) GlobalFree(memory);
+    CloseClipboard();
+}
 
 std::wstring decode(const std::string& data) {
     const auto size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, data.data(), static_cast<int>(data.size()), nullptr, 0);
@@ -338,6 +393,7 @@ void setDemo(bool enabled) {
     state = State{}; state.revision = revision;
     if (enabled) {
         state.key = L"demo"; state.title = L"原生歌词演示（模拟数据）"; state.playing = true;
+        state.canToggle = true;
         state.duration = 24; state.status = L"模拟数据";
         state.lines = lyrics::parse(L"[00:00]原生歌词演示 · 模拟数据\n[00:04]无需安装 .NET 或浏览器运行时\n[00:08]右键导入本地 UTF-8 LRC\n[00:12]支持系统媒体会话与播放进度\n[00:16]歌词在任务栏空闲区域显示\n[00:20]右键关闭演示，读取真实播放器");
     }
@@ -359,7 +415,9 @@ void centerWindow() {
         monitor.rcWork.bottom - height - MulDiv(8, dpi, 96), width, height, SWP_NOACTIVATE);
 }
 void placeWindow() {
-    if (!docked) return;
+    bool playing; { std::lock_guard lock(gate); playing = state.playing; }
+    if (preferencesState.shouldHide(playing)) { ShowWindow(windowHandle, SW_HIDE); return; }
+    if (!docked) { ShowWindow(windowHandle, SW_SHOWNOACTIVATE); return; }
     BarSnapshot selected;
     const auto monitor = MonitorFromWindow(windowHandle, MONITOR_DEFAULTTOPRIMARY);
     { std::lock_guard lock(barStore->gate); for (const auto& bar : barStore->bars) if (MonitorFromWindow(bar.handle, MONITOR_DEFAULTTOPRIMARY) == monitor) { selected = bar; break; } }
@@ -410,6 +468,24 @@ void menu() {
         AppendMenuW(popup, MF_STRING | (state.canNext ? 0 : MF_GRAYED), NextTrack, L"下一首");
     }
     AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
+    State snapshot; { std::lock_guard lock(gate); snapshot = state; }
+    const auto copyText = preferences::copyableLine(snapshot.lines, lyricPosition(snapshot));
+    AppendMenuW(popup, MF_STRING | (copyText.empty() ? MF_GRAYED : 0), CopyLine, L"复制当前歌词");
+    const auto timing = CreatePopupMenu();
+    const auto unavailable = snapshot.key.empty() ? MF_GRAYED : 0;
+    AppendMenuW(timing, MF_STRING | unavailable, Earlier, L"当前歌曲提前 0.5 秒   Ctrl + 滚轮向上");
+    AppendMenuW(timing, MF_STRING | unavailable, Later, L"当前歌曲延后 0.5 秒   Ctrl + 滚轮向下");
+    AppendMenuW(timing, MF_STRING | unavailable, ResetOffset, L"重置当前歌曲校准");
+    AppendMenuW(timing, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(timing, MF_STRING, GlobalEarlier, L"全局提前 0.5 秒   Ctrl + Shift + 滚轮向上");
+    AppendMenuW(timing, MF_STRING, GlobalLater, L"全局延后 0.5 秒   Ctrl + Shift + 滚轮向下");
+    AppendMenuW(timing, MF_STRING, GlobalReset, L"重置全局校准");
+    wchar_t timingLabel[128]{};
+    swprintf_s(timingLabel, L"歌词校准（单曲 %+.1f 秒 / 全局 %+.1f 秒）", preferencesState.trackOffset(snapshot.key), preferencesState.globalOffset);
+    AppendMenuW(popup, MF_POPUP, reinterpret_cast<UINT_PTR>(timing), timingLabel);
+    AppendMenuW(popup, MF_STRING | (preferencesState.hideWhenPaused ? MF_CHECKED : 0), HidePaused, L"暂停或无播放时隐藏");
+    AppendMenuW(popup, MF_STRING | (preferencesState.clickThrough ? MF_CHECKED : 0), ClickThrough, L"鼠标穿透（在托盘取消）");
+    AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(popup, MF_STRING, Details, L"当前歌曲与歌词状态…");
     AppendMenuW(popup, MF_STRING, Import, L"导入当前歌曲的 LRC…");
     AppendMenuW(popup, MF_STRING, Retry, L"重新获取歌词");
@@ -434,18 +510,15 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         SetBkMode(dc, TRANSPARENT); SetTextColor(dc, RGB(245, 245, 245));
         auto old = SelectObject(dc, font);
         State snapshot; { std::lock_guard lock(gate); snapshot = state; }
-        double position = snapshot.position + (snapshot.playing ? std::chrono::duration<double>(Clock::now() - snapshot.sampled).count() * snapshot.rate : 0);
-        if (demo) position = std::fmod(std::max(0.0, position), 24.0);
-        else if (snapshot.duration > 0) position = std::min(position, snapshot.duration);
-        const int index = lyrics::find(snapshot.lines, position);
+        const int index = lyrics::find(snapshot.lines, lyricPosition(snapshot));
         auto text = index >= 0 ? snapshot.lines[index].text : snapshot.title;
-        if (text.empty()) text = L"Taskbar Lyrics Native · 原型";
+        if (text.empty()) text = index >= 0 ? L"♫  间奏" : L"Taskbar Lyrics Native · 原型";
         const auto inset = MulDiv(25, GetDpiForWindow(hwnd), 96);
         // Solid grip pixels remain draggable even though the background passes clicks through.
         const int gripLeft = MulDiv(5, GetDpiForWindow(hwnd), 96);
         const int gripHalfHeight = MulDiv(6, GetDpiForWindow(hwnd), 96);
         RECT grip{gripLeft, bounds.bottom / 2 - gripHalfHeight, inset - gripLeft, bounds.bottom / 2 + gripHalfHeight};
-        FillRect(dc, &grip, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
+        if (!preferencesState.clickThrough) FillRect(dc, &grip, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
         RECT top{inset, 0, bounds.right - inset, docked ? bounds.bottom : bounds.bottom * 3 / 5};
         DrawTextW(dc, text.c_str(), -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         SetTextColor(dc, RGB(160, 170, 180));
@@ -459,6 +532,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_TIMER: placeWindow(); InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case RefreshMessage: InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_LBUTTONDOWN:
+        if (preferencesState.clickThrough) return 0;
         if (docked) {
             POINT cursor{}; RECT rect{}; RECT bar{};
             if (GetCursorPos(&cursor) && GetWindowRect(hwnd, &rect)) {
@@ -478,22 +552,41 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_MOUSEMOVE: if (dragging) { POINT cursor{}; if (GetCursorPos(&cursor) && (manuallyPlaced || cursor.x != dragStart)) { manuallyPlaced = true; horizontalOffset = dragOffset + cursor.x - dragStart; placeWindow(); } } return 0;
     case WM_LBUTTONUP: dragging = false; ReleaseCapture(); return 0;
     case WM_CAPTURECHANGED: dragging = false; return 0;
+    case WM_MOUSEWHEEL:
+        if (GET_KEYSTATE_WPARAM(wParam) & MK_CONTROL) {
+            adjustOffset(static_cast<short>(HIWORD(wParam)) / 120.0 * .5, (GET_KEYSTATE_WPARAM(wParam) & MK_SHIFT) != 0);
+            return 0;
+        }
+        break;
     case WM_CONTEXTMENU: menu(); return 0;
     case TrayMessage: if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONDBLCLK) menu(); return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
         case Import: importLrc(); break;
+        case CopyLine: copyLine(); break;
+        case Earlier: case Later: adjustOffset(LOWORD(wParam) == Earlier ? .5 : -.5, false); break;
+        case ResetOffset: adjustOffset(0, false, true); break;
+        case GlobalEarlier: case GlobalLater: adjustOffset(LOWORD(wParam) == GlobalEarlier ? .5 : -.5, true); break;
+        case GlobalReset: adjustOffset(0, true, true); break;
+        case HidePaused: preferencesState.hideWhenPaused = !preferencesState.hideWhenPaused; savePreferences(); placeWindow(); break;
+        case ClickThrough: preferencesState.clickThrough = !preferencesState.clickThrough; updateInput(); savePreferences(); break;
         case Details: { State snapshot; { std::lock_guard lock(gate); snapshot = state; }
             std::wstring commandResult; { std::lock_guard lock(gate); commandResult = controlStatus; }
-            const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status + L"\n" + commandResult;
+            wchar_t timing[128]{};
+            swprintf_s(timing, L"\n单曲校准 %+.1f 秒 / 全局 %+.1f 秒\n正值使歌词提前出现；每项范围 ±10 秒。", preferencesState.trackOffset(snapshot.key), preferencesState.globalOffset);
+            const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status + L"\n" + commandResult + timing + L"\n" + preferencesStatus;
             MessageBoxW(hwnd, description.c_str(), L"当前歌曲与歌词状态", MB_OK); break; }
         case Online: online = !online; { std::lock_guard lock(gate); ++state.revision; } break;
         case Retry: { std::lock_guard lock(gate); state.lines.clear(); ++state.revision; } break;
-        case Dock: docked = !docked; if (!docked) { centerWindow(); ShowWindow(hwnd, SW_SHOWNOACTIVATE); } else placeWindow(); break;
+        case Dock: docked = !docked; if (!docked) centerWindow(); placeWindow(); break;
         case Demo: setDemo(!demo); break;
         case Center: horizontalOffset = 0; manuallyPlaced = false; centerWindow(); placeWindow(); break;
         case PreviousTrack: case PlayPause: case NextTrack: {
             std::lock_guard lock(gate);
+            if (demo && LOWORD(wParam) == PlayPause) {
+                state.position = lyricPosition(state) - preferencesState.effectiveOffset(state.key);
+                state.sampled = Clock::now(); state.playing = !state.playing;
+            }
             if (!demo && !state.source.empty() && commands.size() < 3) commands.emplace_back(LOWORD(wParam), state.source);
             break;
         }
@@ -519,7 +612,18 @@ int diagnostics(const std::wstring& mode, const std::filesystem::path& path) {
     try {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         std::string result;
-        if (mode == L"--probe") {
+        if (mode == L"--preferences-check") {
+            auto temporary = path; temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".settings.json";
+            if (std::filesystem::exists(temporary)) throw std::runtime_error("Temporary test file already exists");
+            preferences::Settings fixture; fixture.globalOffset = -.5; fixture.hideWhenPaused = true; fixture.clickThrough = true;
+            fixture.setTrackOffset(L"AppleMusic\n测试歌曲\n歌手\n专辑", 1.5);
+            preferences::save(fixture, temporary);
+            const auto restored = preferences::load(temporary);
+            std::filesystem::remove(temporary);
+            if (!restored.hideWhenPaused || !restored.clickThrough || restored.effectiveOffset(L"AppleMusic\n测试歌曲\n歌手\n专辑") != 1)
+                throw std::runtime_error("Preferences round trip failed");
+            result = "PASS: Unicode track calibration and visibility settings survive atomic save/load\n";
+        } else if (mode == L"--probe") {
             const auto manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
             unsigned count = 0;
             for (const auto& session : manager.GetSessions()) { (void)session; ++count; }
@@ -563,13 +667,23 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     std::vector<std::wstring> args;
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
     LocalFree(argv);
-    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check")) return diagnostics(args[0], args[1]);
+    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check" || args[0] == L"--preferences-check")) return diagnostics(args[0], args[1]);
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarLyrics.Native.Prototype");
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(mutex); return 0; }
+    winrt::init_apartment(winrt::apartment_type::single_threaded);
     online = std::find(args.begin(), args.end(), L"--offline") == args.end();
     docked = std::find(args.begin(), args.end(), L"--floating") == args.end();
     if (std::find(args.begin(), args.end(), L"--demo") != args.end()) setDemo(true);
+    if (!demo) {
+        PWSTR localData = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localData))) {
+            preferencesPath = std::filesystem::path(localData) / L"TaskbarLyrics" / L"Native" / L"settings.json";
+            CoTaskMemFree(localData);
+            try { preferencesState = preferences::load(preferencesPath); }
+            catch (...) { preferencesStatus = L"设置文件无法读取，暂用默认值。"; }
+        }
+    }
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     WNDCLASSW wc{}; wc.lpfnWndProc = procedure; wc.hInstance = instance; wc.lpszClassName = L"TaskbarLyricsNative";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
@@ -578,10 +692,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
         L"Taskbar Lyrics Native · 原型", WS_POPUP, 0, 0, 640, 68, nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { CloseHandle(mutex); return 1; }
     SetLayeredWindowAttributes(windowHandle, TransparentKey, 255, LWA_COLORKEY);
+    updateInput();
     const auto dpi = GetDpiForWindow(windowHandle);
     font = CreateFontW(-MulDiv(19, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
-    centerWindow(); addTray(); SetTimer(windowHandle, 1, 200, nullptr); if (!docked) ShowWindow(windowHandle, SW_SHOWNOACTIVATE);
+    centerWindow(); addTray(); SetTimer(windowHandle, 1, 200, nullptr); if (!docked) placeWindow();
     std::thread background(worker);
     std::thread lyricsBackground(lyricWorker);
     // Explorer UIA providers may block indefinitely. The inspector owns its heap state;
@@ -593,5 +708,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     stopping = true; background.join(); lyricsBackground.join();
     if (font) DeleteObject(font);
     CloseHandle(mutex);
+    winrt::uninit_apartment();
     return 0;
 }

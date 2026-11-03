@@ -6,7 +6,7 @@ if (Test-Path $target) { throw 'Test install directory already exists; refusing 
 if (Test-Path $key) { throw 'Native prototype is already installed; refusing to alter it.' }
 $logs = Join-Path $root 'codex_tmp'
 New-Item -ItemType Directory -Force $logs | Out-Null
-$setup = Join-Path $root 'artifacts/TaskbarLyrics-Native-0.1.2-prototype-setup-x64.exe'
+$setup = Join-Path $root 'artifacts/TaskbarLyrics-Native-0.2.0-prototype-setup-x64.exe'
 try {
     $install = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NOICONS',"/DIR=`"$target`"", "/LOG=`"$logs/native-install.log`"" -WindowStyle Hidden -PassThru -Wait
     if ($install.ExitCode -ne 0) { throw "Installer failed: $($install.ExitCode)" }
