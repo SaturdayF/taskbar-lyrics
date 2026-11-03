@@ -2,142 +2,98 @@
 
 # Taskbar Lyrics · 任务栏歌词
 
-Windows 任务栏同步歌词工具，通过系统媒体会话获取当前播放歌曲的信息和进度，在任务栏区域显示对应歌词。
+Windows 任务栏同步歌词工具。通过系统媒体会话读取正在播放的歌曲和进度，在任务栏空闲区域显示透明歌词。
 
-**当前版本：v0.4.0** · Windows 10/11 x64 · C# / .NET 8 / WPF · [验证记录](docs/VALIDATION.md) · [MIT License](LICENSE)
+**v0.2.0** · C++20 / Win32 / C++/WinRT · Windows 10 2004+ / Windows 11 x64 · [MIT License](LICENSE)
 
-## C++ 轻量原型：快速启动
+## 下载与运行
 
-原生原型 v0.2.0 与下面介绍的 C# 版本并存，面向 Windows 10 2004+ / Windows 11 x64，无需另装 .NET 或 WebView2。已支持任务栏空闲区显示与图标避让，完整设置尚未迁移，详情见 [原生版说明](native/README.md)。
+从 [GitHub Actions](https://github.com/SaturdayF/taskbar-lyrics/actions/workflows/build.yml) 最近成功的构建下载 `TaskbarLyrics-native-win-x64` 构件，解开其中的 `TaskbarLyrics-Native-0.2.0-win-x64.zip`，运行 `TaskbarLyrics.Native.exe`。下载 Actions 构件需登录 GitHub。
 
-- **安装版**：运行 `TaskbarLyrics-Native-0.2.0-prototype-setup-x64.exe`，安装后从开始菜单打开 **Taskbar Lyrics Native Prototype**。
-- **便携版**：解压 `TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip`，双击 `TaskbarLyrics.Native.exe`。
-- 在 QQ 音乐、网易云音乐或 Apple Music 客户端播放歌曲，并启用播放器的系统媒体控制（SMTC）。原型会尝试读取歌曲并在线匹配歌词；真实播放器的端到端兼容性仍待逐一验证。
-- 右键歌词窗口或托盘图标，可查看匹配状态、重试、导入 UTF-8 LRC、切换演示或退出。默认在任务栏空闲区域显示；空间不足或任务栏不可用时隐藏，托盘菜单可切换到悬浮模式。
+程序无需安装 .NET、WebView2 或单独的 VC++ 运行库。图标内嵌，关闭菜单后继续在系统托盘运行。
 
-本地构建产物位于 `artifacts/`。GitHub Actions 构建成功后，可登录 GitHub 下载 `TaskbarLyrics-native-prototype-win-x64` 构件中的便携 ZIP；源码仓库不包含编译后的 EXE。
+1. 打开 QQ 音乐、网易云音乐或 Apple Music/iTunes，并开启播放器的系统媒体控制（SMTC）。
+2. 播放歌曲，程序自动匹配同步歌词；没有歌词时显示歌曲信息。
+3. 按住左侧手柄横向拖动。右键歌词或托盘图标可控制播放、校准歌词、导入 LRC 和调整显示行为。
+4. 从托盘菜单退出。程序不创建自动启动项。
 
-本地试运行（在项目目录的 PowerShell 中）：
+离线演示无需播放器，也不会请求在线歌词。
 
 ```powershell
-.\artifacts\native-win-x64\TaskbarLyrics.Native.exe
-# 离线演示，无需播放器：
-.\artifacts\native-win-x64\TaskbarLyrics.Native.exe --demo --offline
+.\TaskbarLyrics.Native.exe --demo --offline
 ```
-
-从源码构建需要 Visual Studio 2022 C++ 桌面工具和 Windows SDK，运行 `./scripts/build-native.ps1`。
 
 ## 功能
 
-- 歌词以任务栏中心为基准，垂直位置固定，仅支持左右拖动。
-- 自动避让任务栏按钮和通知区域，优先移动，空间不足时缩短宽度；没有可读空间时隐藏。
-- 支持仅主屏、指定显示器和全部显示器，各屏独立保存水平位置；指定屏幕断开后暂用主屏，恢复连接后重新使用。
-- 支持锁定位置和一键恢复居中，自动避让不会覆盖保存的水平位置。
-- 自动跟随正在播放的 QQ 音乐、网易云音乐或 Apple Music，也可指定播放器。
-- 支持行级 LRC 同步、字号调整、±10 秒时间微调、本地歌词导入和在线匹配。
-- 设置界面分为“正在播放”“外观与位置”“歌词与来源”，支持实时预览和自动保存。
-- 歌词栏背景透明，可按住左侧手柄横向拖动。右键歌词或托盘图标可播放或暂停、切换上一首和下一首。
-- 支持单曲及全局时间校准，每项 ±10 秒，叠加生效；单曲校准按播放器、歌名、歌手及专辑保存，切歌和重启后保留。
-- 可选暂停或无播放时隐藏，播放恢复后自动显示；可选鼠标穿透，从托盘或设置中关闭后恢复拖动。
-- 右键复制当前同步歌词；前奏、间奏或未匹配到歌词时不可复制占位文本。
-- 通过系统托盘打开设置、恢复位置或退出；程序和窗口内嵌应用图标。
+- **透明任务栏歌词**：以任务栏中心为基准，垂直位置固定，支持左右拖动；自动避开任务栏按钮和通知区域。
+- **空间适配**：可用区域不足时缩短歌词栏；没有可读空间、任务栏隐藏、检测过期或当前屏幕有全屏应用时隐藏。
+- **播放控制**：上一首、播放或暂停、下一首，按播放器报告的可用操作启用菜单。
+- **单曲与全局校准**：每项 ±10 秒，叠加生效，切歌及重启后保留；校准不改变播放器进度。
+- **暂停隐藏**：可选暂停或无播放时隐藏，恢复播放后自动显示；托盘控制始终可用。
+- **鼠标穿透**：可让点击交给下方任务栏；从托盘关闭后恢复拖动、滚轮和右键交互。
+- **复制歌词**：复制当前同步歌词正文；前奏、空白间奏和未匹配状态不复制占位文本。
+- **本地 LRC**：支持导入带时间戳的 UTF-8 LRC，最大 2 MB，仅当前歌曲会话有效。
+- **状态诊断**：查看当前歌曲、匹配来源、控制结果，手动重试或恢复居中。
+
+## 快捷操作
+
+| 操作 | 入口 | 行为 |
+| --- | --- | --- |
+| 单曲校准 | 右键“歌词校准”；`Ctrl + 滚轮` | 每格 0.5 秒，向上提前、向下延后 |
+| 全局校准 | 右键“歌词校准”；`Ctrl + Shift + 滚轮` | 与单曲校准叠加，用于所有歌曲 |
+| 重置校准 | 右键“歌词校准”子菜单 | 单曲和全局可分别重置 |
+| 暂停隐藏、鼠标穿透 | 歌词或托盘右键菜单 | 默认关闭，开关自动保存 |
+| 复制当前歌词 | 歌词或托盘右键菜单 | 复制当前同步行 |
+| 悬浮模式 | 取消“在任务栏空闲区域显示”或使用 `--floating` | 切换为可自由移动的悬浮窗口 |
+
+单曲以播放器、歌名、歌手和专辑区分，不依赖可能暂时缺失的媒体时长；元数据完全相同的录音共用校准。正值让歌词提前出现。鼠标穿透开启时，歌词栏不接收鼠标操作，需从托盘关闭。
 
 ## 播放器与歌词来源
 
 | 播放器 | 歌曲及进度 | 歌词来源 |
 | --- | --- | --- |
-| QQ 音乐 Windows 客户端 | Windows SMTC 媒体会话 | QQ 歌曲搜索与 LRC 接口，失败回退 LRCLIB；支持导入 LRC |
-| 网易云音乐 Windows 客户端 | Windows SMTC 媒体会话 | 网易歌曲搜索与 LRC 接口，失败回退 LRCLIB；支持导入 LRC |
-| Apple Music Windows 客户端 / iTunes | Windows SMTC 媒体会话 | LRCLIB 精确匹配和候选搜索，失败回退网易云音乐；支持导入 LRC |
+| QQ 音乐 Windows 客户端 | Windows SMTC | LRCLIB，失败回退网易公开接口；支持本地 LRC |
+| 网易云音乐 Windows 客户端 | Windows SMTC | LRCLIB，失败回退网易公开接口；支持本地 LRC |
+| Apple Music / iTunes | Windows SMTC | LRCLIB，失败回退网易公开接口；支持本地 LRC |
 
-Windows 系统媒体会话提供歌曲信息和播放时间，歌词文本由上表中的在线来源或本地 LRC 提供。QQ／网易接口的可用性可能受客户端版本、地区和服务端策略影响。未找到同步歌词时显示歌曲信息。
+歌词匹配校验歌名、歌手和可用时长，候选搜索优先同专辑结果。媒体会话不直接提供歌词正文。网络或来源收录会影响匹配结果，失败后约 30 秒重试，也可手动重试。
 
-客户端需开启“系统媒体控制 / SMTC / 与系统媒体控件集成”，具体名称随版本变化。
+播放器需提供 SMTC 歌曲和进度信息。真实客户端的同步、暂停、切歌及拖动进度仍需按客户端版本逐一验收；公开样例歌词查询成功不等同于客户端端到端验证。
 
-## 校准与快捷操作
+## 数据与兼容范围
 
-C# 版和原生版均支持以下操作。隐藏与穿透默认关闭，演示模式的调整不写入正式设置。
-
-| 操作 | 入口 | 行为 |
-| --- | --- | --- |
-| 单曲校准 | 歌词或托盘右键菜单；歌词栏上 `Ctrl + 滚轮` | 每格 0.5 秒，向上提前、向下延后；不改变播放器进度 |
-| 全局校准 | C# 设置页／原生版校准菜单；`Ctrl + Shift + 滚轮` | 与单曲校准叠加，用于所有歌曲 |
-| 重置单曲校准 | 右键校准菜单或 C# 设置页 | 仅清除当前录音的校准，不改变全局值 |
-| 暂停或无播放时隐藏 | 右键菜单或 C# 设置页 | 自动隐藏歌词窗口，托盘仍可控制播放 |
-| 鼠标穿透 | 右键菜单或 C# 设置页 | 点击交给下方任务栏；从托盘关闭后恢复歌词交互 |
-| 复制当前歌词 | 歌词或托盘右键菜单 | 复制当前显示的同步歌词正文 |
-
-鼠标穿透开启时，歌词栏不接收拖动、滚轮或右键操作。单曲校准不依赖播放器暂时缺失的时长；不同专辑分别记录，同一专辑内元数据完全相同的录音共用校准。
-
-相关项目的功能说明与来源见 [项目对照](docs/RELATED_PROJECTS.md)。
-
-## 运行
-
-另有正在验证的 [C++ 原生轻量原型](native/README.md)，目标为免运行时、小体积部署；尚未完整迁移下面列出的 C# 版本功能。构建命令为 `./scripts/build-native.ps1`，原 C# 版本仍保留。
-
-系统要求：Windows 10 2004（19041）及以上，x64。`scripts/build.ps1 -Publish` 生成包含 .NET 运行时的便携版。
-
-1. 解压便携包并打开 `TaskbarLyrics.App.exe`。
-2. 在支持的播放器中播放音乐；自动模式优先选择正在播放的会话。
-3. 歌词默认在主屏显示，自动寻找任务栏空闲位置。拖动仅调整横向位置，纵向固定在任务栏中心；双击或右键进入设置。
-4. 在“外观与位置 → 显示器与图标避让”选择仅主屏、指定显示器或全部显示器，并设置自动避让开关。
-5. 设置支持选择播放器、调整字号、±10 秒时间偏移、锁定位置、关闭在线匹配、导入当前歌曲的 LRC 和重新匹配。
-6. 关闭设置后程序继续运行，从系统托盘菜单或歌词右键菜单退出。
-
-## 图标避让与多屏
-
-- 后台约每秒读取各屏任务栏的可点击区域，保留按钮和通知区域周围的间距。
-- 优先在空闲区域保持完整宽度；空间有限时缩短歌词栏，长句以省略号显示；可用宽度不足 160 逻辑像素时隐藏。
-- 任务栏布局读取失败或缓存超过 8 秒时暂时隐藏，检测恢复后重新显示。关闭自动避让后可手动调整位置。
-- 只在实际存在任务栏的屏幕显示；指定屏幕的任务栏不可用时使用主屏或其他可用任务栏。副屏需在 Windows 设置中开启任务栏显示。
-- 位置按 Windows 显示设备名分别保存，支持负坐标屏幕和按屏 DPI 换算；全部显示器共享同一播放进度与歌词数据。
-
-## 兼容范围
-
-- 当前适配 Windows 标准水平任务栏。竖直或高度不足的任务栏不显示歌词栏。
-- 歌词栏使用透明置顶窗口，通过读取任务栏控件边界避让，不改变系统任务栏布局。
-- 已在本机单屏 150% 缩放下验证实际窗口避让与居中；双屏热插拔、不同 DPI 实机组合、自动隐藏、全屏应用和替代任务栏仍需专项验证。
-- 未提供系统媒体会话的客户端、网页播放器和其他设备上的播放不在当前支持范围内。
-- 三家真实客户端的播放、暂停、切歌和拖动进度仍需逐一实机验收，兼容性以实际客户端版本为准。
-
-## 歌词同步及数据
-
-- LRC 支持多时间戳、1–3 位小数和 `[offset:]`；暂停时停止推进，切歌取消旧请求，拖动进度后重新定位。
-- 在线歌词按歌名、歌手和时长匹配。合作歌手、别名或录音版本差异可能导致匹配失败，可通过本地 LRC 补充。
-- 本地 LRC 优先于网络，按播放器和录音信息保存；在线成功结果缓存 7 天，失败最多每 2 分钟自动重试，也可手动重试。
-- 在线匹配会向相应平台或 LRCLIB 发送歌曲元数据，包括歌名、歌手，以及匹配所需的专辑和时长。可在设置中关闭在线请求。
-- 设置和缓存位于 `%LOCALAPPDATA%\TaskbarLyrics`，导入文件建议使用 UTF-8 编码。
-- 程序不读取登录凭据或 Cookie，无遥测及音频上传、下载功能。歌词权利归其权利人所有。
+- 校准、暂停隐藏和鼠标穿透保存在 `%LOCALAPPDATA%\TaskbarLyrics\Native\settings.json`，通过临时文件替换保存。`--demo` 启动时使用独立默认设置，不写入正式设置。
+- 在线及停靠开关、本地导入的歌词和窗口位置暂不持久化；无在线歌词磁盘缓存。
+- 在线匹配向 LRCLIB 或网易发送歌曲元数据及匹配歌曲 ID。菜单可关闭在线匹配，`--offline` 可禁止启动后的在线查询。
+- 不读取登录凭据或 Cookie，无遥测及音频上传、下载。歌词权利归其权利人所有。
+- 使用透明置顶窗口，不向 Explorer 注入代码或修改任务栏布局；适配 Windows 标准水平任务栏。
+- 当前在窗口所在屏幕显示，支持识别主屏和副屏任务栏；尚不支持同时在全部屏幕显示或保存各屏位置。副屏需开启任务栏显示。
+- 全部设置通过右键菜单提供。多屏混合 DPI、自动隐藏和不同 Windows 版本仍需进一步实机验证。
+- 媒体、歌词和任务栏检测在独立线程运行；切歌会丢弃旧歌结果，同步网络请求仍可能等待超时。
 
 ## 开发与验证
 
-安装 .NET 8 SDK，在 PowerShell 运行：
+需要 Visual Studio 2022 C++ 桌面工具及 Windows SDK，运行以下命令生成便携包。
 
 ```powershell
-./scripts/build.ps1
-./scripts/build.ps1 -Publish
-dotnet run --project src/TaskbarLyrics.App -- --demo
+.\scripts\build.ps1
+# 安装包另需 Inno Setup 6.3+ 或 7
+.\scripts\build.ps1 -Iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+# 使用模拟歌曲检查实际窗口，不控制真实播放器
+.\scripts\check-native.ps1 -Docked -Interactions
 ```
 
-`tests/TaskbarLyrics.Tests` 包含 63 项检查，覆盖 LRC、歌曲匹配、本地导入、单曲校准及保存、复制范围、暂停隐藏、任务栏空闲区计算、多屏选择和断开回退，以及 100%／125%／150%／200% 缩放下的边界计算。CI 在 Windows 上运行检查、构建并输出便携 ZIP。
+构建包含 20 项核心检查及 Unicode 设置读写检查。便携产物位于 `artifacts/native-win-x64/` 和 `artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip`；启用 Inno Setup 时生成 `TaskbarLyrics-Native-0.2.0-setup-x64.exe`，安装仅针对当前用户。
 
-| 命令参数 | 用途 |
+| 路径 | 内容 |
 | --- | --- |
-| `--demo` | 显示标注为模拟数据的歌词和播放进度 |
-| `--probe` | 将本机媒体会话写入 `%LOCALAPPDATA%\TaskbarLyrics\sessions.txt`，文件可能包含当前歌名 |
-| `--render-previews <输出目录>` | 使用模拟数据渲染三页设置界面和紧凑窗口 PNG |
-| `--taskbar-probe <JSON文件>` | 只读输出任务栏边界、DPI、占用区域及可用歌词位置，不记录应用标题 |
-| `--check-placement <JSON文件>` | 短暂显示模拟歌词，检查实际窗口避让、垂直居中、隐藏及恢复、鼠标穿透及交互恢复 |
+| `native/main.cpp` | 媒体会话、在线匹配、透明窗口及托盘菜单 |
+| `native/lyrics.h`、`native/layout.h` | LRC 解析、时间定位及任务栏空闲区计算 |
+| `native/preferences.h`、`native/preferences-store.h` | 校准、显示偏好和设置保存 |
+| `native/tests.cpp` | 无播放器依赖的核心检查 |
+| `scripts` | 构建、窗口检查、安装检查与图标封装 |
+| `assets` | PNG 和多尺寸 Windows ICO |
 
-任务栏诊断应运行生成的 `TaskbarLyrics.App.exe`，以应用其 DPI 声明；直接用 `dotnet TaskbarLyrics.App.dll` 可能受宿主 DPI 虚拟化影响。输出文件的父目录需已存在。
+[构建与诊断](native/README.md) · [验证记录](docs/VALIDATION.md) · [相关项目对照](docs/RELATED_PROJECTS.md)
 
-| 目录 | 内容 |
-| --- | --- |
-| `src/TaskbarLyrics.Core` | 歌词解析、歌曲匹配、网络适配和任务栏位置计算 |
-| `src/TaskbarLyrics.App` | 媒体会话、歌词窗口、设置和系统托盘 |
-| `assets` | PNG 和多尺寸 Windows ICO 图标 |
-| `scripts` | 构建、图标封装和便携包生成脚本 |
-| `tests` | 核心功能检查 |
-| `docs` | 验证记录 |
-
-参考：[Windows 媒体会话 API](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssession)、[LRCLIB API](https://lrclib.net/docs)、[QQ 接口行为参考](https://github.com/jsososo/QQMusicApi)。
+接口参考：[Windows SMTC](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager)、[LRCLIB](https://lrclib.net/docs)。

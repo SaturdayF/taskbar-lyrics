@@ -402,7 +402,7 @@ void addTray() {
     NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = windowHandle; data.uID = 1;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; data.uCallbackMessage = TrayMessage;
     data.hIcon = LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1));
-    wcscpy_s(data.szTip, L"Taskbar Lyrics Native · 原型");
+    wcscpy_s(data.szTip, L"Taskbar Lyrics");
     Shell_NotifyIconW(NIM_ADD, &data);
 }
 void centerWindow() {
@@ -512,7 +512,7 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         State snapshot; { std::lock_guard lock(gate); snapshot = state; }
         const int index = lyrics::find(snapshot.lines, lyricPosition(snapshot));
         auto text = index >= 0 ? snapshot.lines[index].text : snapshot.title;
-        if (text.empty()) text = index >= 0 ? L"♫  间奏" : L"Taskbar Lyrics Native · 原型";
+        if (text.empty()) text = index >= 0 ? L"♫  间奏" : L"Taskbar Lyrics";
         const auto inset = MulDiv(25, GetDpiForWindow(hwnd), 96);
         // Solid grip pixels remain draggable even though the background passes clicks through.
         const int gripLeft = MulDiv(5, GetDpiForWindow(hwnd), 96);
@@ -689,7 +689,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
     RegisterClassW(&wc);
     windowHandle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, wc.lpszClassName,
-        L"Taskbar Lyrics Native · 原型", WS_POPUP, 0, 0, 640, 68, nullptr, nullptr, instance, nullptr);
+        L"Taskbar Lyrics", WS_POPUP, 0, 0, 640, 68, nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { CloseHandle(mutex); return 1; }
     SetLayeredWindowAttributes(windowHandle, TransparentKey, 255, LWA_COLORKEY);
     updateInput();

@@ -38,14 +38,14 @@ try {
     Get-Content "$build/preferences-check.txt"
     & "$(Split-Path $compiler)/dumpbin.exe" /nologo /dependents "$out/TaskbarLyrics.Native.exe" | Set-Content "$build/dependencies.txt"
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inspection failed.' }
-    Copy-Item "$root/native/README.md" "$out/README.md"
+    Copy-Item "$root/README.md" "$out/README.md"
     Copy-Item "$root/LICENSE" "$out/LICENSE"
-    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip" -Force
+    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip" -Force
     if ($Iscc) {
         & $Iscc "$root/native/installer.iss"
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
-    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip" | Select-Object FullName,Length
+    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip" | Select-Object FullName,Length
 } finally {
     Pop-Location
     $env:PATH = $savedPath

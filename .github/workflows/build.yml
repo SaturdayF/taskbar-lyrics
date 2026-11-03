@@ -7,24 +7,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build and check native prototype
+      - name: Build and check C++ application
         shell: pwsh
-        run: ./scripts/build-native.ps1
+        run: ./scripts/build.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: TaskbarLyrics-native-prototype-win-x64
-          path: artifacts/TaskbarLyrics-Native-0.2.0-prototype-win-x64.zip
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - name: Test, build and publish
-        shell: pwsh
-        run: ./scripts/build.ps1 -Publish
-      - uses: actions/upload-artifact@v4
-        with:
-          name: TaskbarLyrics-win-x64
-          path: artifacts/TaskbarLyrics-v0.4.0-win-x64.zip
+          name: TaskbarLyrics-native-win-x64
+          path: artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip
+          if-no-files-found: error
