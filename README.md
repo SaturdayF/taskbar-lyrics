@@ -4,14 +4,14 @@
 
 Windows 任务栏同步歌词工具，通过系统媒体会话获取当前播放歌曲的信息和进度，在任务栏区域显示对应歌词。
 
-**当前版本：v0.3.0** · Windows 10/11 x64 · C# / .NET 8 / WPF · [验证记录](docs/VALIDATION.md) · [MIT License](LICENSE)
+**当前版本：v0.3.1** · Windows 10/11 x64 · C# / .NET 8 / WPF · [验证记录](docs/VALIDATION.md) · [MIT License](LICENSE)
 
 ## C++ 轻量原型：快速启动
 
-原生原型 v0.1.1 与下面介绍的 C# 版本并存，面向 Windows 10 2004+ / Windows 11 x64，无需另装 .NET 或 WebView2。已支持任务栏空闲区显示与图标避让，完整设置尚未迁移，详情见 [原生版说明](native/README.md)。
+原生原型 v0.1.2 与下面介绍的 C# 版本并存，面向 Windows 10 2004+ / Windows 11 x64，无需另装 .NET 或 WebView2。已支持任务栏空闲区显示与图标避让，完整设置尚未迁移，详情见 [原生版说明](native/README.md)。
 
-- **安装版**：运行 `TaskbarLyrics-Native-0.1.1-prototype-setup-x64.exe`，安装后从开始菜单打开 **Taskbar Lyrics Native Prototype**。
-- **便携版**：解压 `TaskbarLyrics-Native-0.1.1-prototype-win-x64.zip`，双击 `TaskbarLyrics.Native.exe`。
+- **安装版**：运行 `TaskbarLyrics-Native-0.1.2-prototype-setup-x64.exe`，安装后从开始菜单打开 **Taskbar Lyrics Native Prototype**。
+- **便携版**：解压 `TaskbarLyrics-Native-0.1.2-prototype-win-x64.zip`，双击 `TaskbarLyrics.Native.exe`。
 - 在 QQ 音乐、网易云音乐或 Apple Music 客户端播放歌曲，并启用播放器的系统媒体控制（SMTC）。原型会尝试读取歌曲并在线匹配歌词；真实播放器的端到端兼容性仍待逐一验证。
 - 右键歌词窗口或托盘图标，可查看匹配状态、重试、导入 UTF-8 LRC、切换演示或退出。默认在任务栏空闲区域显示；空间不足或任务栏不可用时隐藏，托盘菜单可切换到悬浮模式。
 
@@ -36,6 +36,7 @@ Windows 任务栏同步歌词工具，通过系统媒体会话获取当前播放
 - 自动跟随正在播放的 QQ 音乐、网易云音乐或 Apple Music，也可指定播放器。
 - 支持行级 LRC 同步、字号调整、±10 秒时间微调、本地歌词导入和在线匹配。
 - 设置界面分为“正在播放”“外观与位置”“歌词与来源”，支持实时预览和自动保存。
+- 歌词栏背景透明，可按住左侧手柄横向拖动。右键歌词或托盘图标可播放或暂停、切换上一首和下一首。
 - 通过系统托盘打开设置、恢复位置或退出；程序和窗口内嵌应用图标。
 
 ## 播放器与歌词来源
@@ -44,9 +45,9 @@ Windows 任务栏同步歌词工具，通过系统媒体会话获取当前播放
 | --- | --- | --- |
 | QQ 音乐 Windows 客户端 | Windows SMTC 媒体会话 | QQ 歌曲搜索与 LRC 接口，失败回退 LRCLIB；支持导入 LRC |
 | 网易云音乐 Windows 客户端 | Windows SMTC 媒体会话 | 网易歌曲搜索与 LRC 接口，失败回退 LRCLIB；支持导入 LRC |
-| Apple Music Windows 客户端 / iTunes | Windows SMTC 媒体会话 | 按歌名、歌手、专辑、时长匹配 LRCLIB；支持导入 LRC |
+| Apple Music Windows 客户端 / iTunes | Windows SMTC 媒体会话 | LRCLIB 精确匹配和候选搜索，失败回退网易云音乐；支持导入 LRC |
 
-Windows 系统媒体会话提供歌曲信息和播放时间，歌词文本由上表中的在线来源或本地 LRC 提供。Apple Music 的歌词通过 LRCLIB 匹配或本地导入获取。QQ／网易接口的可用性可能受客户端版本、地区和服务端策略影响。未找到同步歌词时显示歌曲信息。
+Windows 系统媒体会话提供歌曲信息和播放时间，歌词文本由上表中的在线来源或本地 LRC 提供。QQ／网易接口的可用性可能受客户端版本、地区和服务端策略影响。未找到同步歌词时显示歌曲信息。
 
 客户端需开启“系统媒体控制 / SMTC / 与系统媒体控件集成”，具体名称随版本变化。
 

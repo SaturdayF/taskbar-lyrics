@@ -115,6 +115,9 @@ internal sealed class LyricsController : IDisposable
         trayIcon = AppAssets.CreateTrayIcon();
         tray = new System.Windows.Forms.NotifyIcon { Icon = trayIcon, Text = "Taskbar Lyrics", Visible = true };
         var menu = new System.Windows.Forms.ContextMenuStrip();
+        menu.Items.Add("上一首", null, async (_, _) => await ControlAsync(PlaybackCommand.Previous));
+        menu.Items.Add("播放 / 暂停", null, async (_, _) => await ControlAsync(PlaybackCommand.Toggle));
+        menu.Items.Add("下一首", null, async (_, _) => await ControlAsync(PlaybackCommand.Next));
         menu.Items.Add("设置与当前歌曲", null, (_, _) => Application.Current.Dispatcher.Invoke(ShowSettings));
         menu.Items.Add("恢复任务栏居中", null, (_, _) => Application.Current.Dispatcher.Invoke(Center));
         menu.Items.Add("退出", null, (_, _) => Application.Current.Dispatcher.Invoke(Exit));
@@ -205,14 +208,15 @@ internal sealed class LyricsController : IDisposable
             var bar = bars.First(x => x.Device.Equals(device, StringComparison.OrdinalIgnoreCase));
             if (!overlays.TryGetValue(device, out var overlay))
             {
-                overlay = new LyricOverlay(settings, Move, ShowSettings, Import, Refresh, Center, Exit);
+                overlay = new LyricOverlay(settings, Move, ShowSettings, Import, Refresh, Center, Exit, async command => await ControlAsync(command));
                 overlays.Add(device, overlay); overlay.Show(); overlay.Update(line, tooltip, playback?.Playing != false);
             }
             var fresh = DateTime.UtcNow - bar.CapturedAt < TimeSpan.FromSeconds(8);
             var canPlace = fresh && (!settings.AvoidIcons || bar.Reliable);
             settings.ScreenOffsets.TryGetValue(device, out var offset);
             var spans = bar.Occupied.Select(x => new HorizontalSpan((x.Left - bar.Bounds.Left) / bar.Scale, (x.Right - bar.Bounds.Left) / bar.Scale)).ToArray();
-            var bounds = canPlace ? TaskbarLayout.Calculate(0, 0, bar.Bounds.Width / bar.Scale, bar.Bounds.Height / bar.Scale, offset, spans, settings.AvoidIcons) : null;
+            var bounds = canPlace ? TaskbarLayout.Calculate(0, 0, bar.Bounds.Width / bar.Scale, bar.Bounds.Height / bar.Scale,
+                offset, spans, settings.AvoidIcons, manual: offset != 0 || overlay.IsDragging) : null;
             overlay.Place(bar, bounds);
             if (!canPlace) pending++; else if (bounds is null) crowded++; else shown++;
         }
@@ -256,6 +260,15 @@ internal sealed class LyricsController : IDisposable
         catch (Exception ex) when (ex is IOException or FormatException or UnauthorizedAccessException) { MessageBox.Show(ex.Message, "导入失败"); }
     }
     private void Refresh() { if (playback is not null && !demo) _ = LoadLyricsAsync(playback.Track); }
+    private async Task ControlAsync(PlaybackCommand command)
+    {
+        if (demo || playback is null) return;
+        bool accepted;
+        try { accepted = await reader.ControlAsync(playback.AppId, command); }
+        catch (Exception) { accepted = false; }
+        if (accepted) await PollAsync();
+        else if (!exiting) tray.ShowBalloonTip(2500, "Taskbar Lyrics", "当前播放器未接受此操作", System.Windows.Forms.ToolTipIcon.Info);
+    }
     private void ShowSettings()
     {
         if (settingsWindow is not null) { settingsWindow.Activate(); return; }

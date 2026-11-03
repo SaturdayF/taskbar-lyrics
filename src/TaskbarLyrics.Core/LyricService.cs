@@ -12,7 +12,7 @@ public sealed class LyricService : IDisposable
     {
         this.folder = folder;
         Directory.CreateDirectory(folder);
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("TaskbarLyrics/0.3.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("TaskbarLyrics/0.3.1");
     }
     public string LocalPath(Track track) => Path.Combine(folder, track.Key + ".lrc");
     public void Import(Track track, string lrc)
@@ -39,6 +39,7 @@ public sealed class LyricService : IDisposable
         if (track.Player == PlayerKind.QQMusic) providers.Add(("QQ 音乐", QQAsync));
         if (track.Player == PlayerKind.NetEase) providers.Add(("网易云音乐", NetEaseAsync));
         providers.Add(("LRCLIB", LrclibAsync));
+        if (track.Player == PlayerKind.AppleMusic) providers.Add(("网易云音乐", NetEaseAsync));
         foreach (var provider in providers)
         {
             token.ThrowIfCancellationRequested();
@@ -73,9 +74,26 @@ public sealed class LyricService : IDisposable
         var url = $"https://lrclib.net/api/get?track_name={Q(track.Title)}&artist_name={Q(track.Artist)}";
         if (!string.IsNullOrWhiteSpace(track.Album)) url += "&album_name=" + Q(track.Album);
         if (track.Duration is >= 1 and <= 3600) url += "&duration=" + Math.Round(track.Duration).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        var item = await GetAsync(url, null, token);
-        if (item is not null && TrackMatch.Accept(track, S(item, "trackName"), [S(item, "artistName")], N(item, "duration")))
-            return S(item, "syncedLyrics");
+        string? Match(JsonNode? candidate)
+        {
+            if (candidate is null || !TrackMatch.Accept(track, S(candidate, "trackName"), [S(candidate, "artistName")], N(candidate, "duration"))) return null;
+            var text = S(candidate, "syncedLyrics");
+            return LrcParser.Parse(text).Count > 0 ? text : null;
+        }
+        try
+        {
+            var exact = Match(await GetAsync(url, null, token));
+            if (exact is not null) return exact;
+        }
+        catch (HttpRequestException) when (!token.IsCancellationRequested) { /* Search is independently available. */ }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested) { /* The exact lookup timed out. */ }
+        var search = await GetAsync($"https://lrclib.net/api/search?track_name={Q(track.Title)}&artist_name={Q(track.Artist)}", null, token);
+        if (search is JsonArray candidates)
+        {
+            var album = TrackMatch.Normalize(track.Album);
+            foreach (var candidate in candidates.OrderByDescending(item => TrackMatch.Normalize(S(item, "albumName")) == album))
+                if (Match(candidate) is { } text) return text;
+        }
         return null;
     }
     private async Task<string?> NetEaseAsync(Track track, CancellationToken token)
@@ -88,7 +106,8 @@ public sealed class LyricService : IDisposable
             if (!TrackMatch.Accept(track, S(song, "name"), artists, N(song, "duration") / 1000)) continue;
             var id = song?["id"]?.ToString();
             var lyrics = await GetAsync($"https://music.163.com/api/song/lyric?id={id}&lv=-1&kv=-1&tv=-1", "https://music.163.com/", token);
-            return S(lyrics?["lrc"], "lyric");
+            var text = S(lyrics?["lrc"], "lyric");
+            if (LrcParser.Parse(text).Count > 0) return text;
         }
         return null;
     }

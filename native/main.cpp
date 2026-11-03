@@ -26,21 +26,26 @@ using Clock = std::chrono::steady_clock;
 constexpr UINT TrayMessage = WM_APP + 1;
 constexpr UINT RefreshMessage = WM_APP + 2;
 constexpr UINT Import = 100, Online = 101, Demo = 102, Center = 103, Exit = 104, Dock = 105, Retry = 106, Details = 107;
+constexpr UINT PreviousTrack = 108, PlayPause = 109, NextTrack = 110;
+constexpr COLORREF TransparentKey = RGB(0, 0, 0);
 constexpr size_t MaxBody = 2 * 1024 * 1024;
 struct State {
-    std::wstring key, title, artist, album, status = L"等待播放器；右键查看菜单";
+    std::wstring key, source, title, artist, album, status = L"等待播放器；右键查看菜单";
     std::vector<lyrics::Line> lines;
     double position = 0, duration = 0, rate = 1;
-    bool playing = false;
+    bool playing = false, hasTimeline = false, canToggle = false, canPrevious = false, canNext = false;
     Clock::time_point sampled = Clock::now();
     unsigned revision = 0;
 };
 State state;
 std::mutex gate;
+std::wstring controlStatus;
+std::vector<std::pair<UINT, std::wstring>> commands;
 std::atomic<bool> online{true}, demo{false}, stopping{false};
 bool docked = true;
 int horizontalOffset = 0, dragStart = 0, dragOffset = 0;
 bool dragging = false;
+bool manuallyPlaced = false;
 struct BarStore { std::mutex gate; std::vector<BarSnapshot> bars; std::atomic<bool> stop{false}; };
 auto barStore = std::make_shared<BarStore>();
 HWND windowHandle = nullptr;
@@ -120,7 +125,6 @@ bool match(const State& track, const std::wstring& title, const std::vector<std:
 }
 std::vector<lyrics::Line> lrclibLines(const State& track, const JsonObject& json) {
     if (!match(track, std::wstring(json.GetNamedString(L"trackName", L"")), {std::wstring(json.GetNamedString(L"artistName", L""))}, json.GetNamedNumber(L"duration", 0))) return {};
-    if (track.duration <= 0 && !track.album.empty() && normalize(std::wstring(json.GetNamedString(L"albumName", L""))) != normalize(track.album)) return {};
     if (!json.HasKey(L"syncedLyrics") || json.GetNamedValue(L"syncedLyrics").ValueType() != JsonValueType::String) return {};
     return lyrics::parse(std::wstring(json.GetNamedString(L"syncedLyrics")));
 }
@@ -138,7 +142,8 @@ std::vector<lyrics::Line> fetchLrclib(const State& track) {
     auto body = request(L"/api/search?track_name=" + encodeQuery(track.title) + L"&artist_name=" + encodeQuery(track.artist));
     if (body.empty()) return {};
     const auto candidates = JsonArray::Parse(decode(body));
-    // Prefer the same album before considering other editions with matching duration.
+    // Album titles can differ across storefronts. Rank the same album first,
+    // while keeping title, artist and any reported duration as matching criteria.
     for (int pass = 0; pass < 2; ++pass) for (auto value : candidates) {
         const auto candidate = value.GetObject();
         const bool sameAlbum = normalize(std::wstring(candidate.GetNamedString(L"albumName", L""))) == normalize(track.album);
@@ -190,7 +195,8 @@ template<typename Operation> auto awaitMedia(Operation operation) {
     }
     return operation.GetResults();
 }
-State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager, const std::wstring& previous) {
+State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager, const std::wstring& previous,
+    GlobalSystemMediaTransportControlsSession* active = nullptr) {
     GlobalSystemMediaTransportControlsSession chosen{nullptr};
     int best = -1;
     for (auto const& session : manager.GetSessions()) {
@@ -202,6 +208,7 @@ State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager,
         } catch (...) { /* One closed session must not hide other players. */ }
     }
     State result;
+    if (active) *active = chosen;
     if (!chosen) return result;
     const auto properties = awaitMedia(chosen.TryGetMediaPropertiesAsync());
     const auto timeline = chosen.GetTimelineProperties();
@@ -209,17 +216,33 @@ State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager,
     result.title = properties.Title(); result.artist = properties.Artist(); result.album = properties.AlbumTitle();
     if (result.artist.empty()) result.artist = properties.AlbumArtist();
     if (result.title.empty()) return State{};
-    result.key = std::wstring(chosen.SourceAppUserModelId()) + L"\n" + result.title + L"\n" + result.artist + L"\n" + result.album;
+    result.source = chosen.SourceAppUserModelId();
+    result.key = result.source + L"\n" + result.title + L"\n" + result.artist + L"\n" + result.album;
     result.duration = std::max(0.0, std::chrono::duration<double>(timeline.EndTime() - timeline.StartTime()).count());
     result.playing = playback.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
-    auto rate = playback.PlaybackRate(); result.rate = rate ? rate.Value() : 1;
+    auto rate = playback.PlaybackRate();
+    result.rate = rate && std::isfinite(rate.Value()) && rate.Value() > 0 ? rate.Value() : 1;
     result.position = std::chrono::duration<double>(timeline.Position() - timeline.StartTime()).count();
     const double elapsed = std::chrono::duration<double>(winrt::clock::now() - timeline.LastUpdatedTime()).count();
-    if (result.playing) result.position += std::max(0.0, elapsed) * result.rate;
+    result.hasTimeline = timeline.LastUpdatedTime().time_since_epoch().count() != 0 || result.position > 0;
+    if (result.playing && elapsed > 0 && elapsed <= (result.duration > 0 ? result.duration : 300.0)) result.position += elapsed * result.rate;
+    const auto controls = playback.Controls();
+    result.canToggle = controls.IsPlayPauseToggleEnabled() || (result.playing ? controls.IsPauseEnabled() : controls.IsPlayEnabled());
+    result.canPrevious = controls.IsPreviousEnabled();
+    result.canNext = controls.IsNextEnabled();
     result.position = std::clamp(result.position, 0.0, result.duration > 0 ? result.duration : 1e9);
     result.sampled = Clock::now();
     result.status = L"未找到同步歌词；可右键导入 UTF-8 LRC";
     return result;
+}
+bool control(const GlobalSystemMediaTransportControlsSession& session, UINT command) {
+    if (command == PreviousTrack) return awaitMedia(session.TrySkipPreviousAsync());
+    if (command == NextTrack) return awaitMedia(session.TrySkipNextAsync());
+    const auto playback = session.GetPlaybackInfo();
+    if (playback.Controls().IsPlayPauseToggleEnabled()) return awaitMedia(session.TryTogglePlayPauseAsync());
+    if (playback.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing)
+        return awaitMedia(session.TryPauseAsync());
+    return awaitMedia(session.TryPlayAsync());
 }
 void worker() {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -229,13 +252,33 @@ void worker() {
         if (!demo) {
             try {
                 if (!manager) manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
-                auto next = readMedia(manager, previous);
-                previous = next.key.substr(0, next.key.find(L'\n'));
+                GlobalSystemMediaTransportControlsSession active{nullptr};
+                auto next = readMedia(manager, previous, &active);
+                previous = next.source;
+                std::vector<std::pair<UINT, std::wstring>> pending;
                 {
                     std::lock_guard lock(gate);
                     if (demo) continue;
-                    if (next.key != state.key) { next.revision = state.revision + 1; state = next; }
-                    else { state.position = next.position; state.duration = next.duration; state.playing = next.playing; state.rate = next.rate; state.sampled = next.sampled; }
+                    pending.swap(commands);
+                    if (next.key != state.key) {
+                        next.revision = state.revision + 1;
+                        state = next;
+                        controlStatus.clear();
+                    } else {
+                        if (!next.hasTimeline && state.playing)
+                            state.position += std::chrono::duration<double>(next.sampled - state.sampled).count() * state.rate;
+                        if (next.hasTimeline) state.position = next.position;
+                        state.duration = next.duration; state.playing = next.playing;
+                        state.rate = next.rate; state.sampled = next.sampled;
+                        state.canToggle = next.canToggle; state.canPrevious = next.canPrevious; state.canNext = next.canNext;
+                    }
+                }
+                for (const auto& [command, source] : pending) {
+                    bool accepted = false;
+                    try { if (!demo && !stopping && active && next.source == source) accepted = control(active, command); }
+                    catch (...) { /* A player may close or reject the command. */ }
+                    std::lock_guard lock(gate);
+                    controlStatus = accepted ? L"" : L"当前播放器未接受此操作";
                 }
                 PostMessageW(windowHandle, RefreshMessage, 0, 0);
             } catch (...) {
@@ -290,6 +333,7 @@ void barWorker(std::shared_ptr<BarStore> store) {
 void setDemo(bool enabled) {
     std::lock_guard lock(gate);
     demo = enabled;
+    commands.clear(); controlStatus.clear();
     const auto revision = state.revision + 1;
     state = State{}; state.revision = revision;
     if (enabled) {
@@ -328,7 +372,7 @@ void placeWindow() {
     const int height = std::min(MulDiv(34, dpi, 96), static_cast<int>(visible.bottom - visible.top) - MulDiv(6, dpi, 96));
     if (height < MulDiv(12, dpi, 96) || live.right - live.left <= live.bottom - live.top) { ShowWindow(windowHandle, SW_HIDE); return; }
     const auto span = layout::choose(live.left, live.right, (live.left + live.right) / 2 + horizontalOffset,
-        MulDiv(520, dpi, 96), MulDiv(160, dpi, 96), selected.occupied, MulDiv(8, dpi, 96));
+        MulDiv(520, dpi, 96), MulDiv(160, dpi, 96), selected.occupied, MulDiv(8, dpi, 96), manuallyPlaced);
     if (!span) { ShowWindow(windowHandle, SW_HIDE); return; }
     const auto foreground = GetForegroundWindow(); RECT front{}; wchar_t name[64]{}; GetClassNameW(foreground, name, 64);
     if (foreground != windowHandle && foreground != selected.handle && wcscmp(name, L"Progman") != 0 && wcscmp(name, L"WorkerW") != 0 &&
@@ -359,6 +403,13 @@ void importLrc() {
 }
 void menu() {
     HMENU popup = CreatePopupMenu();
+    {
+        std::lock_guard lock(gate);
+        AppendMenuW(popup, MF_STRING | (state.canPrevious ? 0 : MF_GRAYED), PreviousTrack, L"上一首");
+        AppendMenuW(popup, MF_STRING | (state.canToggle ? 0 : MF_GRAYED), PlayPause, state.playing ? L"暂停" : L"播放");
+        AppendMenuW(popup, MF_STRING | (state.canNext ? 0 : MF_GRAYED), NextTrack, L"下一首");
+    }
+    AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(popup, MF_STRING, Details, L"当前歌曲与歌词状态…");
     AppendMenuW(popup, MF_STRING, Import, L"导入当前歌曲的 LRC…");
     AppendMenuW(popup, MF_STRING, Retry, L"重新获取歌词");
@@ -389,7 +440,12 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         const int index = lyrics::find(snapshot.lines, position);
         auto text = index >= 0 ? snapshot.lines[index].text : snapshot.title;
         if (text.empty()) text = L"Taskbar Lyrics Native · 原型";
-        const auto inset = MulDiv(12, GetDpiForWindow(hwnd), 96);
+        const auto inset = MulDiv(25, GetDpiForWindow(hwnd), 96);
+        // Solid grip pixels remain draggable even though the background passes clicks through.
+        const int gripLeft = MulDiv(5, GetDpiForWindow(hwnd), 96);
+        const int gripHalfHeight = MulDiv(6, GetDpiForWindow(hwnd), 96);
+        RECT grip{gripLeft, bounds.bottom / 2 - gripHalfHeight, inset - gripLeft, bounds.bottom / 2 + gripHalfHeight};
+        FillRect(dc, &grip, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
         RECT top{inset, 0, bounds.right - inset, docked ? bounds.bottom : bounds.bottom * 3 / 5};
         DrawTextW(dc, text.c_str(), -1, &top, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         SetTextColor(dc, RGB(160, 170, 180));
@@ -403,9 +459,23 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
     case WM_TIMER: placeWindow(); InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case RefreshMessage: InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_LBUTTONDOWN:
-        if (docked) { POINT cursor; GetCursorPos(&cursor); dragStart = cursor.x; dragOffset = horizontalOffset; dragging = true; SetCapture(hwnd); }
+        if (docked) {
+            POINT cursor{}; RECT rect{}; RECT bar{};
+            if (GetCursorPos(&cursor) && GetWindowRect(hwnd, &rect)) {
+                const auto monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+                std::lock_guard lock(barStore->gate);
+                for (const auto& snapshot : barStore->bars) {
+                    if (MonitorFromWindow(snapshot.handle, MONITOR_DEFAULTTONULL) == monitor) { bar = snapshot.bounds; break; }
+                }
+                if (bar.right > bar.left) {
+                    dragStart = cursor.x;
+                    dragOffset = (rect.left + rect.right) / 2 - (bar.left + bar.right) / 2;
+                    dragging = true; SetCapture(hwnd);
+                }
+            }
+        }
         else { ReleaseCapture(); SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0); } return 0;
-    case WM_MOUSEMOVE: if (dragging) { POINT cursor; GetCursorPos(&cursor); horizontalOffset = dragOffset + cursor.x - dragStart; placeWindow(); } return 0;
+    case WM_MOUSEMOVE: if (dragging) { POINT cursor{}; if (GetCursorPos(&cursor) && (manuallyPlaced || cursor.x != dragStart)) { manuallyPlaced = true; horizontalOffset = dragOffset + cursor.x - dragStart; placeWindow(); } } return 0;
     case WM_LBUTTONUP: dragging = false; ReleaseCapture(); return 0;
     case WM_CAPTURECHANGED: dragging = false; return 0;
     case WM_CONTEXTMENU: menu(); return 0;
@@ -414,13 +484,19 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         switch (LOWORD(wParam)) {
         case Import: importLrc(); break;
         case Details: { State snapshot; { std::lock_guard lock(gate); snapshot = state; }
-            const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status;
+            std::wstring commandResult; { std::lock_guard lock(gate); commandResult = controlStatus; }
+            const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status + L"\n" + commandResult;
             MessageBoxW(hwnd, description.c_str(), L"当前歌曲与歌词状态", MB_OK); break; }
         case Online: online = !online; { std::lock_guard lock(gate); ++state.revision; } break;
         case Retry: { std::lock_guard lock(gate); state.lines.clear(); ++state.revision; } break;
         case Dock: docked = !docked; if (!docked) { centerWindow(); ShowWindow(hwnd, SW_SHOWNOACTIVATE); } else placeWindow(); break;
         case Demo: setDemo(!demo); break;
-        case Center: horizontalOffset = 0; centerWindow(); placeWindow(); break;
+        case Center: horizontalOffset = 0; manuallyPlaced = false; centerWindow(); placeWindow(); break;
+        case PreviousTrack: case PlayPause: case NextTrack: {
+            std::lock_guard lock(gate);
+            if (!demo && !state.source.empty() && commands.size() < 3) commands.emplace_back(LOWORD(wParam), state.source);
+            break;
+        }
         case Exit: DestroyWindow(hwnd); break;
         } return 0;
     case WM_DPICHANGED: {
@@ -501,7 +577,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     windowHandle = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED, wc.lpszClassName,
         L"Taskbar Lyrics Native · 原型", WS_POPUP, 0, 0, 640, 68, nullptr, nullptr, instance, nullptr);
     if (!windowHandle) { CloseHandle(mutex); return 1; }
-    SetLayeredWindowAttributes(windowHandle, 0, 230, LWA_ALPHA);
+    SetLayeredWindowAttributes(windowHandle, TransparentKey, 255, LWA_COLORKEY);
     const auto dpi = GetDpiForWindow(windowHandle);
     font = CreateFontW(-MulDiv(19, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");

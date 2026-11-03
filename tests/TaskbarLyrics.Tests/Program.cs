@@ -57,6 +57,10 @@ Check(avoided.Width == 520 && (avoided.Left + avoided.Width <= 642 || avoided.Le
 Check(avoided.Top == centered.Top, "icon avoidance preserves vertical center");
 var reduced = TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 200), new(600, 800)], true)!;
 Check(reduced.Width == 384 && reduced.Left == 208, "shorten lyrics to fit limited free space");
+var dragLeft = TaskbarLayout.Calculate(0, 0, 800, 48, -25, [new(0, 200), new(600, 800)], true, manual: true)!;
+var dragRight = TaskbarLayout.Calculate(0, 0, 800, 48, 25, [new(0, 200), new(600, 800)], true, manual: true)!;
+Check(dragLeft.Left < dragRight.Left && dragLeft.Top == dragRight.Top && dragRight.Left + dragRight.Width <= 592,
+    "drag inside a narrow lane without overlapping icons");
 Check(TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 350), new(500, 800)], true) is null, "hide when no readable free lane remains");
 Check(TaskbarLayout.Calculate(0, 0, 800, 48, 0, [new(0, 800)], true) is null, "fully occupied taskbar hides lyrics");
 var merged = TaskbarLayout.Calculate(0, 0, 1200, 48, 0, [new(500, 700), new(0, 300), new(250, 520)], true)!;

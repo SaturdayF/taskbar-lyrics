@@ -20,20 +20,30 @@ internal sealed class LyricOverlay : Window
     private int dragStartX;
     private double dragStartOffset;
     private bool dragging, displayed;
+    public bool IsDragging => dragging;
     public LyricOverlay(Settings settings, Action<string, double, bool> move, Action showSettings,
-        Action import, Action refresh, Action center, Action exit)
+        Action import, Action refresh, Action center, Action exit, Action<PlaybackCommand>? control = null)
     {
         this.settings = settings; this.move = move;
         Title = "Taskbar Lyrics"; Icon = AppAssets.Image; Width = 520; Height = 34;
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         AllowsTransparency = true; Background = Brushes.Transparent; ShowInTaskbar = false; ShowActivated = false; Topmost = true;
         Opacity = 0; IsHitTestVisible = false;
-        var border = new Border { Background = Surface(210, 24), BorderBrush = new SolidColorBrush(Color.FromArgb(40, 255, 255, 255)),
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14, 0, 14, 0), Child = lyric };
-        Content = border;
-        MouseEnter += (_, _) => border.Background = Surface(245, 38);
-        MouseLeave += (_, _) => border.Background = Surface(210, 24);
+        var row = new DockPanel { Background = Brushes.Transparent, Margin = new Thickness(10, 0, 10, 0) };
+        var grip = new TextBlock { Text = "⠿", Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(2, 0, 8, 0), ToolTip = "左右拖动歌词栏" };
+        DockPanel.SetDock(grip, Dock.Left);
+        row.Children.Add(grip);
+        row.Children.Add(lyric);
+        Content = row;
         var menu = new ContextMenu();
+        if (control is not null)
+        {
+            Add("上一首", () => control(PlaybackCommand.Previous));
+            Add("播放 / 暂停", () => control(PlaybackCommand.Toggle));
+            Add("下一首", () => control(PlaybackCommand.Next));
+            menu.Items.Add(new Separator());
+        }
         Add("设置与当前歌曲", showSettings); Add("导入当前歌曲的 LRC…", import); Add("重新获取歌词", refresh);
         Add("恢复任务栏居中", center); Add("退出", exit); ContextMenu = menu;
         SourceInitialized += (_, _) =>
@@ -60,7 +70,6 @@ internal sealed class LyricOverlay : Window
         LostMouseCapture += (_, _) => { if (dragging) { dragging = false; if (target is not null) move(target.Device, double.NaN, true); } };
         void Add(string text, Action action) { var item = new MenuItem { Header = text }; item.Click += (_, _) => action(); menu.Items.Add(item); }
     }
-    private static SolidColorBrush Surface(byte alpha, byte shade) => new(Color.FromArgb(alpha, shade, shade, shade));
     public void Update(string text, string tooltip, bool playing)
     {
         lyric.Text = text; lyric.Opacity = playing ? 1 : .65; ToolTip = tooltip;

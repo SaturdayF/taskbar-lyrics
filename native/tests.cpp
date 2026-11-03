@@ -22,7 +22,10 @@ int main() {
         check(slot && slot->start >= -1492 && slot->end <= -1208, "negative screen and shrinking");
         slot = layout::choose(0, 1000, 500, 520, 160, {{100, 600}, {400, 800}}, 8);
         check(slot && slot->start >= 808, "merge occupied intervals");
-        std::cout << "PASS: 8 LRC and 4 taskbar layout checks\n";
+        const auto first = layout::choose(0, 800, 375, 520, 160, {{0, 200}, {600, 800}}, 8, true);
+        const auto last = layout::choose(0, 800, 425, 520, 160, {{0, 200}, {600, 800}}, 8, true);
+        check(first && last && first->start < last->start && last->end <= 592, "drag inside a lane narrower than the default width");
+        std::cout << "PASS: 8 LRC and 5 taskbar layout checks\n";
         return 0;
     } catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 1; }
 }

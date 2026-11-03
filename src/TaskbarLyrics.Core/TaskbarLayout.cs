@@ -7,14 +7,15 @@ public static class TaskbarLayout
 {
     // All values use device-independent pixels. Only horizontal offset is user controlled.
     public static LyricBounds? Calculate(double left, double top, double width, double height, double offset,
-        IReadOnlyList<HorizontalSpan>? occupied = null, bool avoidIcons = false)
+        IReadOnlyList<HorizontalSpan>? occupied = null, bool avoidIcons = false, bool manual = false)
     {
         if (!double.IsFinite(left + top + width + height) || height < 12 || width <= height || width < 32) return null;
-        var lyricWidth = Math.Min(520, width - 16);
+        var lyricWidth = Math.Min(520, manual ? Math.Max(Math.Min(160, width - 16), width - 48) : width - 16);
         var lyricHeight = Math.Min(34, height - 6);
         var centeredLeft = left + (width - lyricWidth) / 2;
         var limit = Math.Max(0, (width - lyricWidth) / 2 - 8);
-        var appliedOffset = Math.Clamp(double.IsFinite(offset) ? offset : 0, -limit, limit);
+        var appliedOffset = Math.Clamp(double.IsFinite(offset) ? offset : 0,
+            manual && avoidIcons ? -width / 2 : -limit, manual && avoidIcons ? width / 2 : limit);
         if (!avoidIcons) return new(centeredLeft + appliedOffset, top + (height - lyricHeight) / 2, lyricWidth, lyricHeight, appliedOffset);
         var start = left + 8;
         var end = left + width - 8;
@@ -31,12 +32,14 @@ public static class TaskbarLayout
         if (cursor < end) free.Add(new(cursor, end));
         var candidates = free.Where(x => x.End - x.Start >= 160).Select(x =>
         {
-            var size = Math.Min(lyricWidth, x.End - x.Start);
+            var available = x.End - x.Start;
+            var size = Math.Min(lyricWidth, manual ? Math.Max(160, available - 32) : available);
             var targetCenter = left + width / 2 + appliedOffset;
             var xPosition = Math.Clamp(targetCenter - size / 2, x.Start, x.End - size);
             return new LyricBounds(xPosition, top + (height - lyricHeight) / 2, size, lyricHeight,
                 xPosition + size / 2 - (left + width / 2));
         }).ToArray();
+        if (manual) return candidates.OrderBy(x => Math.Abs(x.Offset - appliedOffset)).ThenByDescending(x => x.Width).FirstOrDefault();
         // Retain full width when possible, then use the nearest available space.
         // When no full-width lane remains, prefer the widest readable lane.
         var full = candidates.Where(x => x.Width >= lyricWidth - .01).ToArray();
