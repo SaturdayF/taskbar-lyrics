@@ -4,6 +4,7 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
 #include <fstream>
