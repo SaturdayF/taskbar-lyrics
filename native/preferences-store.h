@@ -17,6 +17,10 @@ inline Settings load(const std::filesystem::path& path) {
     auto json = JsonObject::Parse(winrt::to_hstring(body));
     result.hideWhenPaused = json.GetNamedBoolean(L"hideWhenPaused", false);
     result.clickThrough = json.GetNamedBoolean(L"clickThrough", false);
+    result.online = json.GetNamedBoolean(L"online", true);
+    result.docked = json.GetNamedBoolean(L"docked", true);
+    result.darkTheme = json.GetNamedBoolean(L"darkTheme", true);
+    result.fontSize = static_cast<int>(std::clamp(json.GetNamedNumber(L"fontSize", 19), 12.0, 26.0));
     result.globalOffset = clamp(json.GetNamedNumber(L"globalOffset", 0));
     if (json.HasKey(L"trackOffsets")) {
         for (const auto& entry : json.GetNamedObject(L"trackOffsets")) {
@@ -31,6 +35,10 @@ inline void save(const Settings& settings, const std::filesystem::path& path) {
     JsonObject json, offsets;
     json.Insert(L"hideWhenPaused", JsonValue::CreateBooleanValue(settings.hideWhenPaused));
     json.Insert(L"clickThrough", JsonValue::CreateBooleanValue(settings.clickThrough));
+    json.Insert(L"online", JsonValue::CreateBooleanValue(settings.online));
+    json.Insert(L"docked", JsonValue::CreateBooleanValue(settings.docked));
+    json.Insert(L"darkTheme", JsonValue::CreateBooleanValue(settings.darkTheme));
+    json.Insert(L"fontSize", JsonValue::CreateNumberValue(std::clamp(settings.fontSize, 12, 26)));
     json.Insert(L"globalOffset", JsonValue::CreateNumberValue(clamp(settings.globalOffset)));
     for (const auto& [key, value] : settings.trackOffsets) offsets.Insert(key, JsonValue::CreateNumberValue(clamp(value)));
     json.Insert(L"trackOffsets", offsets);

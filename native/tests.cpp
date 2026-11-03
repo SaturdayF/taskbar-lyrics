@@ -38,7 +38,19 @@ int main() {
         check(preferences.shouldHide(false) && !preferences.shouldHide(true), "pause hides and play restores");
         check(preferences::copyableLine(lines, .59).empty() && preferences::copyableLine(lines, .6) == L"第一行", "copy only a timestamped current lyric");
         check(preferences::copyableLine(lyrics::parse(L"[00:00]song\n[00:02]"), 3).empty(), "do not copy instrumental placeholder");
-        std::cout << "PASS: 8 LRC, 5 taskbar layout and 7 preference checks\n";
+        preferences::Settings baseline, draft, live;
+        draft.fontSize = 22; live.hideWhenPaused = true;
+        auto merged = preferences::mergeDraft(live, baseline, draft);
+        check(merged.fontSize == 22 && merged.hideWhenPaused, "dialog save preserves concurrent changes from tray");
+        baseline.setTrackOffset(L"A", 1); draft = baseline; draft.setTrackOffset(L"A", 0);
+        live = baseline; live.setTrackOffset(L"B", 2);
+        merged = preferences::mergeDraft(live, baseline, draft);
+        check(merged.trackOffset(L"A") == 0 && merged.trackOffset(L"B") == 2, "reset draft preserves another song calibration");
+        draft = baseline; draft.fontSize = 99; draft.globalOffset = -99;
+        merged = preferences::mergeDraft(live, baseline, draft);
+        check(merged.fontSize == 26 && merged.globalOffset == -10, "draft values bounded before application");
+        check(preferences::mergeDraft(live, baseline, baseline) == live, "unmodified draft leaves live settings intact");
+        std::cout << "PASS: 8 LRC, 5 taskbar layout and 11 preference checks\n";
         return 0;
     } catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 1; }
 }

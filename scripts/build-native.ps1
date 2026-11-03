@@ -27,7 +27,9 @@ try {
     & $rc /nologo /fo "$build/app.res" app.rc
     if ($LASTEXITCODE -ne 0) { throw 'Native resources failed.' }
     $flags = @('/nologo','/std:c++20','/EHsc','/utf-8','/W4','/WX','/O1','/MT','/DUNICODE','/D_UNICODE','/DNDEBUG')
-    & $compiler @flags "/Fo$build/main.obj" main.cpp "$build/app.res" "/Fe$out/TaskbarLyrics.Native.exe" /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib comdlg32.lib winhttp.lib windowsapp.lib normaliz.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib
+    & $compiler @flags /c "/Fo$build/settings-ui.obj" settings-ui.cpp
+    if ($LASTEXITCODE -ne 0) { throw 'Settings UI build failed.' }
+    & $compiler @flags "/Fo$build/main.obj" main.cpp "$build/settings-ui.obj" "$build/app.res" "/Fe$out/TaskbarLyrics.Native.exe" /link /SUBSYSTEM:WINDOWS /MANIFEST:NO /OPT:REF /OPT:ICF user32.lib gdi32.lib shell32.lib comdlg32.lib winhttp.lib windowsapp.lib normaliz.lib ole32.lib oleaut32.lib uiautomationcore.lib uuid.lib gdiplus.lib dwmapi.lib comctl32.lib
     if ($LASTEXITCODE -ne 0) { throw 'Native application build failed.' }
     & $compiler @flags "/Fo$build/tests.obj" tests.cpp "/Fe$build/native-tests.exe"
     if ($LASTEXITCODE -ne 0) { throw 'Native tests build failed.' }
@@ -36,16 +38,23 @@ try {
     $check = Start-Process -FilePath "$out/TaskbarLyrics.Native.exe" -ArgumentList '--preferences-check', "`"$build/preferences-check.txt`"" -WindowStyle Hidden -Wait -PassThru
     if ($check.ExitCode -ne 0) { throw 'Native preferences persistence check failed.' }
     Get-Content "$build/preferences-check.txt"
+    $ui = Start-Process -FilePath "$out/TaskbarLyrics.Native.exe" -ArgumentList '--ui-check', "`"$build/settings-previews`"" -WindowStyle Hidden -Wait -PassThru
+    Get-Content "$build/settings-previews/checks.txt"
+    if ($ui.ExitCode -ne 0) { throw 'Settings UI checks failed.' }
     & "$(Split-Path $compiler)/dumpbin.exe" /nologo /dependents "$out/TaskbarLyrics.Native.exe" | Set-Content "$build/dependencies.txt"
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inspection failed.' }
     Copy-Item "$root/README.md" "$out/README.md"
     Copy-Item "$root/LICENSE" "$out/LICENSE"
-    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip" -Force
+    New-Item -ItemType Directory -Force "$out/docs", "$out/assets", "$out/native" | Out-Null
+    Copy-Item "$root/docs/*.md", "$root/docs/settings-*.png" "$out/docs"
+    Copy-Item "$root/assets/app.png" "$out/assets"
+    Copy-Item "$root/native/README.md" "$out/native"
+    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE", "$out/docs", "$out/assets", "$out/native" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.3.0-win-x64.zip" -Force
     if ($Iscc) {
         & $Iscc "$root/native/installer.iss"
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
-    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.2.0-win-x64.zip" | Select-Object FullName,Length
+    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.3.0-win-x64.zip" | Select-Object FullName,Length
 } finally {
     Pop-Location
     $env:PATH = $savedPath

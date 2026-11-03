@@ -22,6 +22,7 @@
 #include "lyrics.h"
 #include "taskbar.h"
 #include "preferences-store.h"
+#include "settings-ui.h"
 
 using namespace winrt::Windows::Media::Control;
 using namespace winrt::Windows::Data::Json;
@@ -32,6 +33,7 @@ constexpr UINT Import = 100, Online = 101, Demo = 102, Center = 103, Exit = 104,
 constexpr UINT PreviousTrack = 108, PlayPause = 109, NextTrack = 110;
 constexpr UINT CopyLine = 111, HidePaused = 112, ClickThrough = 113, Earlier = 114, Later = 115, ResetOffset = 116;
 constexpr UINT GlobalEarlier = 117, GlobalLater = 118, GlobalReset = 119;
+constexpr UINT OpenSettings = 120;
 constexpr COLORREF TransparentKey = RGB(0, 0, 0);
 constexpr size_t MaxBody = 2 * 1024 * 1024;
 struct State {
@@ -59,8 +61,10 @@ auto barStore = std::make_shared<BarStore>();
 HWND windowHandle = nullptr;
 HFONT font = nullptr;
 UINT taskbarCreated = 0;
+std::unique_ptr<settingsui::Window> settingsWindow;
 
 void savePreferences() {
+    preferencesState.online = online; preferencesState.docked = docked;
     if (demo || preferencesPath.empty()) return;
     try { preferences::save(preferencesState, preferencesPath); preferencesStatus.clear(); }
     catch (...) {
@@ -69,6 +73,11 @@ void savePreferences() {
         wcscpy_s(data.szInfoTitle, L"Taskbar Lyrics"); wcscpy_s(data.szInfo, preferencesStatus.c_str()); data.dwInfoFlags = NIIF_WARNING;
         Shell_NotifyIconW(NIM_MODIFY, &data);
     }
+}
+void updateFont() {
+    if (font) DeleteObject(font);
+    font = CreateFontW(-MulDiv(preferencesState.fontSize, GetDpiForWindow(windowHandle), 96), 0, 0, 0, FW_NORMAL,
+        FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
 }
 double lyricPosition(const State& snapshot) {
     double position = snapshot.position + (snapshot.playing ? std::chrono::duration<double>(Clock::now() - snapshot.sampled).count() * snapshot.rate : 0);
@@ -427,7 +436,7 @@ void placeWindow() {
     MONITORINFO info{sizeof(info)}; GetMonitorInfoW(monitor, &info);
     RECT visible{}; IntersectRect(&visible, &live, &info.rcMonitor);
     const auto dpi = GetDpiForWindow(selected.handle);
-    const int height = std::min(MulDiv(34, dpi, 96), static_cast<int>(visible.bottom - visible.top) - MulDiv(6, dpi, 96));
+    const int height = std::min(MulDiv(std::max(34, preferencesState.fontSize + 6), dpi, 96), static_cast<int>(visible.bottom - visible.top) - MulDiv(6, dpi, 96));
     if (height < MulDiv(12, dpi, 96) || live.right - live.left <= live.bottom - live.top) { ShowWindow(windowHandle, SW_HIDE); return; }
     const auto span = layout::choose(live.left, live.right, (live.left + live.right) / 2 + horizontalOffset,
         MulDiv(520, dpi, 96), MulDiv(160, dpi, 96), selected.occupied, MulDiv(8, dpi, 96), manuallyPlaced);
@@ -443,7 +452,8 @@ void importLrc() {
     { std::lock_guard lock(gate); snapshot = state; }
     if (snapshot.key.empty()) { MessageBoxW(windowHandle, L"请先播放歌曲，或开启演示模式。", L"导入歌词", MB_OK); return; }
     wchar_t path[32768]{};
-    OPENFILENAMEW dialog{sizeof(dialog)}; dialog.hwndOwner = windowHandle; dialog.lpstrFile = path;
+    OPENFILENAMEW dialog{sizeof(dialog)};
+    dialog.hwndOwner = settingsWindow && settingsWindow->handle() ? settingsWindow->handle() : windowHandle; dialog.lpstrFile = path;
     dialog.nMaxFile = static_cast<DWORD>(std::size(path)); dialog.lpstrFilter = L"UTF-8 LRC\0*.lrc\0\0";
     dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&dialog)) return;
@@ -461,6 +471,8 @@ void importLrc() {
 }
 void menu() {
     HMENU popup = CreatePopupMenu();
+    AppendMenuW(popup, MF_STRING, OpenSettings, L"设置…");
+    AppendMenuW(popup, MF_SEPARATOR, 0, nullptr);
     {
         std::lock_guard lock(gate);
         AppendMenuW(popup, MF_STRING | (state.canPrevious ? 0 : MF_GRAYED), PreviousTrack, L"上一首");
@@ -499,6 +511,53 @@ void menu() {
     const auto command = TrackPopupMenu(popup, TPM_RETURNCMD | TPM_RIGHTBUTTON, cursor.x, cursor.y, 0, windowHandle, nullptr);
     DestroyMenu(popup); PostMessageW(windowHandle, WM_NULL, 0, 0);
     if (command) SendMessageW(windowHandle, WM_COMMAND, command, 0);
+}
+void showSettings() {
+    if (!settingsWindow) settingsWindow = std::make_unique<settingsui::Window>(settingsui::Callbacks{
+        [] {
+            State current; std::wstring commandStatus;
+            { std::lock_guard lock(gate); current = state; commandStatus = controlStatus; }
+            settingsui::Snapshot snapshot; snapshot.preferences = preferencesState;
+            snapshot.preferences.online = online; snapshot.preferences.docked = docked;
+            snapshot.key = current.key; snapshot.title = current.title; snapshot.artist = current.artist; snapshot.album = current.album;
+            snapshot.status = commandStatus.empty() ? current.status : commandStatus;
+            snapshot.demo = demo; snapshot.playing = current.playing;
+            snapshot.duration = current.duration;
+            snapshot.position = std::max(0.0, lyricPosition(current) - preferencesState.effectiveOffset(current.key));
+            snapshot.lyric = preferences::copyableLine(current.lines, lyricPosition(current)); snapshot.canCopy = !snapshot.lyric.empty();
+            snapshot.canPrevious = current.canPrevious; snapshot.canToggle = current.canToggle; snapshot.canNext = current.canNext;
+            return snapshot;
+        },
+        [](const preferences::Settings& baseline, const preferences::Settings& draft) -> std::wstring {
+            auto current = preferencesState; current.online = online; current.docked = docked;
+            auto next = preferences::mergeDraft(current, baseline, draft);
+            if (!demo) {
+                if (preferencesPath.empty()) return L"无法定位设置目录，更改尚未保存。";
+                try { preferences::save(next, preferencesPath); }
+                catch (...) { return L"设置保存失败，请检查应用数据目录。"; }
+            }
+            if (next.online != online.load()) { online = next.online; std::lock_guard lock(gate); ++state.revision; }
+            const bool changedDock = docked != next.docked;
+            docked = next.docked; preferencesState = std::move(next); preferencesStatus.clear();
+            updateFont(); updateInput(); if (changedDock) centerWindow(); placeWindow();
+            return L"";
+        },
+        [](settingsui::Action action) {
+            UINT command = 0;
+            switch (action) {
+            case settingsui::Action::Previous: command = PreviousTrack; break;
+            case settingsui::Action::Toggle: command = PlayPause; break;
+            case settingsui::Action::Next: command = NextTrack; break;
+            case settingsui::Action::Copy: command = CopyLine; break;
+            case settingsui::Action::Import: command = Import; break;
+            case settingsui::Action::Retry: command = Retry; break;
+            case settingsui::Action::Center: command = Center; break;
+            case settingsui::Action::Demo: command = Demo; break;
+            }
+            SendMessageW(windowHandle, WM_COMMAND, command, 0);
+        }
+    });
+    settingsWindow->show();
 }
 LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
     if (message == taskbarCreated && taskbarCreated) { addTray(); return 0; }
@@ -559,9 +618,10 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         }
         break;
     case WM_CONTEXTMENU: menu(); return 0;
-    case TrayMessage: if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONDBLCLK) menu(); return 0;
+    case TrayMessage: if (lParam == WM_RBUTTONUP) menu(); else if (lParam == WM_LBUTTONDBLCLK) showSettings(); return 0;
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case OpenSettings: showSettings(); break;
         case Import: importLrc(); break;
         case CopyLine: copyLine(); break;
         case Earlier: case Later: adjustOffset(LOWORD(wParam) == Earlier ? .5 : -.5, false); break;
@@ -576,9 +636,9 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
             swprintf_s(timing, L"\n单曲校准 %+.1f 秒 / 全局 %+.1f 秒\n正值使歌词提前出现；每项范围 ±10 秒。", preferencesState.trackOffset(snapshot.key), preferencesState.globalOffset);
             const auto description = snapshot.title + L"\n" + snapshot.artist + L"\n" + snapshot.album + L"\n\n" + snapshot.status + L"\n" + commandResult + timing + L"\n" + preferencesStatus;
             MessageBoxW(hwnd, description.c_str(), L"当前歌曲与歌词状态", MB_OK); break; }
-        case Online: online = !online; { std::lock_guard lock(gate); ++state.revision; } break;
+        case Online: online = !online; { std::lock_guard lock(gate); ++state.revision; } savePreferences(); break;
         case Retry: { std::lock_guard lock(gate); state.lines.clear(); ++state.revision; } break;
-        case Dock: docked = !docked; if (!docked) centerWindow(); placeWindow(); break;
+        case Dock: docked = !docked; if (!docked) centerWindow(); placeWindow(); savePreferences(); break;
         case Demo: setDemo(!demo); break;
         case Center: horizontalOffset = 0; manuallyPlaced = false; centerWindow(); placeWindow(); break;
         case PreviousTrack: case PlayPause: case NextTrack: {
@@ -593,14 +653,13 @@ LRESULT CALLBACK procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam
         case Exit: DestroyWindow(hwnd); break;
         } return 0;
     case WM_DPICHANGED: {
-        if (font) DeleteObject(font);
-        font = CreateFontW(-MulDiv(19, HIWORD(wParam), 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+        updateFont();
         const auto rect = reinterpret_cast<RECT*>(lParam);
         SetWindowPos(hwnd, nullptr, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top, SWP_NOACTIVATE | SWP_NOZORDER); return 0;
     }
     case WM_DISPLAYCHANGE: centerWindow(); return 0;
     case WM_DESTROY: {
+        settingsWindow.reset();
         stopping = true; barStore->stop = true; KillTimer(hwnd, 1);
         NOTIFYICONDATAW data{sizeof(data)}; data.hWnd = hwnd; data.uID = 1; Shell_NotifyIconW(NIM_DELETE, &data);
         PostQuitMessage(0); return 0;
@@ -616,11 +675,13 @@ int diagnostics(const std::wstring& mode, const std::filesystem::path& path) {
             auto temporary = path; temporary += L"." + std::to_wstring(GetCurrentProcessId()) + L".settings.json";
             if (std::filesystem::exists(temporary)) throw std::runtime_error("Temporary test file already exists");
             preferences::Settings fixture; fixture.globalOffset = -.5; fixture.hideWhenPaused = true; fixture.clickThrough = true;
+            fixture.online = false; fixture.docked = false; fixture.darkTheme = false; fixture.fontSize = 24;
             fixture.setTrackOffset(L"AppleMusic\n测试歌曲\n歌手\n专辑", 1.5);
             preferences::save(fixture, temporary);
             const auto restored = preferences::load(temporary);
             std::filesystem::remove(temporary);
-            if (!restored.hideWhenPaused || !restored.clickThrough || restored.effectiveOffset(L"AppleMusic\n测试歌曲\n歌手\n专辑") != 1)
+            if (!restored.hideWhenPaused || !restored.clickThrough || restored.effectiveOffset(L"AppleMusic\n测试歌曲\n歌手\n专辑") != 1 ||
+                restored.online || restored.docked || restored.darkTheme || restored.fontSize != 24)
                 throw std::runtime_error("Preferences round trip failed");
             result = "PASS: Unicode track calibration and visibility settings survive atomic save/load\n";
         } else if (mode == L"--probe") {
@@ -667,10 +728,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     std::vector<std::wstring> args;
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
     LocalFree(argv);
+    if (args.size() == 2 && args[0] == L"--ui-check") return settingsui::checkUi(args[1]);
     if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check" || args[0] == L"--preferences-check")) return diagnostics(args[0], args[1]);
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarLyrics.Native.Prototype");
     if (!mutex) return 1;
-    if (GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(mutex); return 0; }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        if (std::find(args.begin(), args.end(), L"--settings") != args.end())
+            PostMessageW(FindWindowW(L"TaskbarLyricsNative", nullptr), WM_COMMAND, OpenSettings, 0);
+        CloseHandle(mutex); return 0;
+    }
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     online = std::find(args.begin(), args.end(), L"--offline") == args.end();
     docked = std::find(args.begin(), args.end(), L"--floating") == args.end();
@@ -684,6 +750,9 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
             catch (...) { preferencesStatus = L"设置文件无法读取，暂用默认值。"; }
         }
     }
+    if (std::find(args.begin(), args.end(), L"--offline") == args.end()) online = preferencesState.online;
+    if (std::find(args.begin(), args.end(), L"--floating") == args.end()) docked = preferencesState.docked;
+    preferencesState.online = online; preferencesState.docked = docked;
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     WNDCLASSW wc{}; wc.lpfnWndProc = procedure; wc.hInstance = instance; wc.lpszClassName = L"TaskbarLyricsNative";
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(1));
@@ -693,9 +762,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     if (!windowHandle) { CloseHandle(mutex); return 1; }
     SetLayeredWindowAttributes(windowHandle, TransparentKey, 255, LWA_COLORKEY);
     updateInput();
-    const auto dpi = GetDpiForWindow(windowHandle);
-    font = CreateFontW(-MulDiv(19, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-        OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+    updateFont();
     centerWindow(); addTray(); SetTimer(windowHandle, 1, 200, nullptr); if (!docked) placeWindow();
     std::thread background(worker);
     std::thread lyricsBackground(lyricWorker);
@@ -703,8 +770,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     // it must never hold up UI shutdown or access destroyed application globals.
     std::thread taskbarBackground(barWorker, barStore);
     taskbarBackground.detach();
+    if (std::find(args.begin(), args.end(), L"--settings") != args.end()) showSettings();
     MSG message;
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        if (settingsWindow && settingsWindow->translate(message)) continue;
+        TranslateMessage(&message); DispatchMessageW(&message);
+    }
     stopping = true; background.join(); lyricsBackground.join();
     if (font) DeleteObject(font);
     CloseHandle(mutex);

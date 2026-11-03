@@ -2,6 +2,8 @@
 
 应用使用 C++20、Win32、C++/WinRT、GDI 和 Windows UI Automation。运行说明及功能范围见 [主文档](../README.md)。
 
+设置页使用 Win32 控件和 GDI+ 绘制，支持浅深色主题、原生标题栏、窗口调整大小及 DPI 变化，不依赖浏览器运行时。
+
 ## 构建
 
 在项目根目录运行 `./scripts/build.ps1`，或直接运行 `./scripts/build-native.ps1`。需要 Visual Studio 2022 C++ 桌面工具和 Windows SDK。脚本使用 x64 MSVC、静态运行库、`/W4 /WX`，构建后执行核心检查及设置读写检查。
@@ -26,6 +28,10 @@ New-Item -ItemType Directory -Force artifacts/diagnostics
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --preferences-check .\artifacts\diagnostics\preferences.txt
 # 离线验证避让、透明标志、鼠标穿透、暂停隐藏和播放恢复
 .\scripts\check-native.ps1 -Docked -Interactions
+# 原生设置页检查及模拟数据截图，不修改正式设置
+.\artifacts\native-win-x64\TaskbarLyrics.Native.exe --ui-check .\artifacts\settings-previews
+# 打开设置页，可与 --demo --offline 配合
+.\artifacts\native-win-x64\TaskbarLyrics.Native.exe --settings
 ```
 
 `--demo --offline` 不读取真实播放器，不写正式设置，可用右键菜单暂停或继续模拟进度。省略 `-Docked` 的窗口检查使用悬浮模式。实际双屏、不同 DPI 和音乐客户端仍需专项验收。
