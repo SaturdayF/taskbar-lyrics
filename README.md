@@ -4,11 +4,11 @@
 
 Windows 任务栏同步歌词工具。通过系统媒体会话读取正在播放的歌曲和进度，在任务栏空闲区域显示透明歌词。
 
-**v0.3.0** · C++20 / Win32 / C++/WinRT · Windows 10 2004+ / Windows 11 x64 · [MIT License](LICENSE)
+**v0.3.1** · C++20 / Win32 / C++/WinRT · Windows 10 2004+ / Windows 11 x64 · [MIT License](LICENSE)
 
 ## 下载与运行
 
-从 [GitHub Actions](https://github.com/SaturdayF/taskbar-lyrics/actions/workflows/build.yml) 最近成功的构建下载 `TaskbarLyrics-native-win-x64` 构件，解开其中的 `TaskbarLyrics-Native-0.3.0-win-x64.zip`，运行 `TaskbarLyrics.Native.exe`。下载 Actions 构件需登录 GitHub。
+从 [GitHub Actions](https://github.com/SaturdayF/taskbar-lyrics/actions/workflows/build.yml) 对应版本成功的构建下载 `TaskbarLyrics-native-win-x64` 构件，解开其中的 `TaskbarLyrics-Native-0.3.1-win-x64.zip`，运行 `TaskbarLyrics.Native.exe`。下载 Actions 构件需登录 GitHub。
 
 程序无需安装 .NET、WebView2 或单独的 VC++ 运行库。图标内嵌，关闭菜单后继续在系统托盘运行。
 
@@ -67,6 +67,8 @@ Windows 任务栏同步歌词工具。通过系统媒体会话读取正在播放
 
 歌词匹配校验歌名、歌手和可用时长，候选搜索优先同专辑结果。媒体会话不直接提供歌词正文。网络或来源收录会影响匹配结果，失败后约 30 秒重试，也可手动重试。
 
+Apple Music 将“歌手 — 专辑”合并到歌手字段、专辑字段为空时，会恢复独立的歌手和专辑后匹配；其他播放器保持原字段规则。该修复保留已有单曲校准。
+
 播放器需提供 SMTC 歌曲和进度信息。真实客户端的同步、暂停、切歌及拖动进度仍需按客户端版本逐一验收；公开样例歌词查询成功不等同于客户端端到端验证。
 
 ## 数据与兼容范围
@@ -92,7 +94,7 @@ Windows 任务栏同步歌词工具。通过系统媒体会话读取正在播放
 .\scripts\check-native.ps1 -Docked -Interactions
 ```
 
-构建包含 24 项核心检查、Unicode 设置读写检查和 17 项原生设置页检查。便携产物位于 `artifacts/native-win-x64/` 和 `artifacts/TaskbarLyrics-Native-0.3.0-win-x64.zip`；启用 Inno Setup 时生成 `TaskbarLyrics-Native-0.3.0-setup-x64.exe`，安装仅针对当前用户。
+构建包含 35 项核心检查、Unicode 设置读写检查和 17 项原生设置页检查。便携产物位于 `artifacts/native-win-x64/` 和 `artifacts/TaskbarLyrics-Native-0.3.1-win-x64.zip`；启用 Inno Setup 时生成 `TaskbarLyrics-Native-0.3.1-setup-x64.exe`，安装仅针对当前用户。
 
 | 路径 | 内容 |
 | --- | --- |

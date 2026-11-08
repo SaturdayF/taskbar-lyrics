@@ -6,7 +6,7 @@
 #include "preferences.h"
 
 namespace settingsui {
-inline constexpr wchar_t Version[] = L"0.3.0";
+inline constexpr wchar_t Version[] = L"0.3.1";
 enum class Action { Previous, Toggle, Next, Copy, Import, Retry, Center, Demo };
 struct Snapshot {
     preferences::Settings preferences;

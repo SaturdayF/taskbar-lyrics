@@ -24,6 +24,8 @@ New-Item -ItemType Directory -Force artifacts/diagnostics
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --superstar-check .\artifacts\diagnostics\superstar.txt
 # 记录真实当前歌曲元数据和匹配结果，不保存歌词正文
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --current-check .\artifacts\diagnostics\current.txt
+# 只读采样当前播放器的进度及匹配歌词索引，约 9 秒，不控制播放
+.\artifacts\native-win-x64\TaskbarLyrics.Native.exe --playback-check .\artifacts\diagnostics\playback.txt
 # 单曲校准、Unicode 和设置文件往返保存，不改正式设置
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --preferences-check .\artifacts\diagnostics\preferences.txt
 # 离线验证避让、透明标志、鼠标穿透、暂停隐藏和播放恢复
@@ -33,5 +35,7 @@ New-Item -ItemType Directory -Force artifacts/diagnostics
 # 打开设置页，可与 --demo --offline 配合
 .\artifacts\native-win-x64\TaskbarLyrics.Native.exe --settings
 ```
+
+当前歌曲及播放诊断会记录来源 ID、原始歌手/专辑字段、修复后的字段和匹配结果；播放诊断另外记录播放状态、进度与歌词索引，不保存歌词正文。
 
 `--demo --offline` 不读取真实播放器，不写正式设置，可用右键菜单暂停或继续模拟进度。省略 `-Docked` 的窗口检查使用悬浮模式。实际双屏、不同 DPI 和音乐客户端仍需专项验收。

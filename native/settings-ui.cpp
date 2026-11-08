@@ -299,7 +299,7 @@ struct Window::Impl {
                     row(264, L"Ctrl + 滚轮", L"在歌词栏调整当前歌曲校准，每格 0.5 秒。", 0);
                     row(344, L"Ctrl + Shift + 滚轮", L"调整全局校准；右键可复制歌词或控制播放。", 0);
                     row(446, L"离线演示", L"使用模拟歌曲验证显示和交互，不请求在线歌词。", 160);
-                    label(g, L"Taskbar Lyrics 0.3.0  ·  C++  ·  Windows 10 / 11", {0, 530, right, 24}, 12, colors.muted);
+                    label(g, L"Taskbar Lyrics 0.3.1  ·  C++  ·  Windows 10 / 11", {0, 530, right, 24}, 12, colors.muted);
                 }
                 g.Restore(contentTransform);
                 const auto thumb = scrollThumb();

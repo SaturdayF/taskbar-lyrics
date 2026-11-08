@@ -20,6 +20,7 @@
 #include <mutex>
 #include <thread>
 #include "lyrics.h"
+#include "media-metadata.h"
 #include "taskbar.h"
 #include "preferences-store.h"
 #include "settings-ui.h"
@@ -38,6 +39,7 @@ constexpr COLORREF TransparentKey = RGB(0, 0, 0);
 constexpr size_t MaxBody = 2 * 1024 * 1024;
 struct State {
     std::wstring key, source, title, artist, album, status = L"等待播放器；右键查看菜单";
+    std::wstring rawArtist, rawAlbumArtist, rawAlbum;
     std::vector<lyrics::Line> lines;
     double position = 0, duration = 0, rate = 1;
     bool playing = false, hasTimeline = false, canToggle = false, canPrevious = false, canNext = false;
@@ -277,11 +279,15 @@ State readMedia(GlobalSystemMediaTransportControlsSessionManager const& manager,
     const auto properties = awaitMedia(chosen.TryGetMediaPropertiesAsync());
     const auto timeline = chosen.GetTimelineProperties();
     const auto playback = chosen.GetPlaybackInfo();
-    result.title = properties.Title(); result.artist = properties.Artist(); result.album = properties.AlbumTitle();
-    if (result.artist.empty()) result.artist = properties.AlbumArtist();
+    result.title = properties.Title(); result.rawArtist = properties.Artist(); result.rawAlbum = properties.AlbumTitle();
+    result.rawAlbumArtist = properties.AlbumArtist();
     if (result.title.empty()) return State{};
     result.source = chosen.SourceAppUserModelId();
-    result.key = result.source + L"\n" + result.title + L"\n" + result.artist + L"\n" + result.album;
+    // Keep existing per-track calibration keys stable when query metadata is repaired.
+    const auto identityArtist = result.rawArtist.empty() ? result.rawAlbumArtist : result.rawArtist;
+    result.key = result.source + L"\n" + result.title + L"\n" + identityArtist + L"\n" + result.rawAlbum;
+    const auto fields = metadata::resolve(result.source, result.rawArtist, result.rawAlbum, result.rawAlbumArtist);
+    result.artist = fields.artist; result.album = fields.album;
     result.duration = std::max(0.0, std::chrono::duration<double>(timeline.EndTime() - timeline.StartTime()).count());
     result.playing = playback.PlaybackStatus() == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
     auto rate = playback.PlaybackRate();
@@ -704,15 +710,26 @@ int diagnostics(const std::wstring& mode, const std::filesystem::path& path) {
         } else {
             State track; track.title = L"Hello"; track.artist = L"Adele"; track.album = L"25"; track.duration = 295;
             if (mode == L"--superstar-check") { track.title = L"Super Star"; track.artist = L"S.H.E"; track.album = L"Super Star"; track.duration = 196; }
-            if (mode == L"--current-check") {
+            if (mode == L"--current-check" || mode == L"--playback-check") {
                 const auto manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
                 track = readMedia(manager, L"");
                 if (track.key.empty()) { std::ofstream(path) << "No supported media session\n"; return 2; }
-                result = "Current track=" + winrt::to_string(track.title) + "; artist=" + winrt::to_string(track.artist) + "; album=" + winrt::to_string(track.album) + "; duration=" + std::to_string(track.duration) + "\n";
+                result = "Source=" + winrt::to_string(track.source) + "; rawArtist=" + winrt::to_string(track.rawArtist) + "; rawAlbumArtist=" + winrt::to_string(track.rawAlbumArtist) + "; rawAlbum=" + winrt::to_string(track.rawAlbum) + "\n";
+                result += "Current track=" + winrt::to_string(track.title) + "; artist=" + winrt::to_string(track.artist) + "; album=" + winrt::to_string(track.album) + "; duration=" + std::to_string(track.duration) + "\n";
             }
             const auto lyrics = fetch(track);
             result += "Synchronized line count=" + std::to_string(lyrics.lines.size()) + "; " + winrt::to_string(lyrics.status) + "\n";
             if (lyrics.lines.empty()) { std::ofstream(path) << result; return 2; }
+            if (mode == L"--playback-check") {
+                const auto manager = awaitMedia(GlobalSystemMediaTransportControlsSessionManager::RequestAsync());
+                for (int sample = 0; sample < 4; ++sample) {
+                    if (sample) std::this_thread::sleep_for(std::chrono::seconds(3));
+                    const auto current = readMedia(manager, track.source);
+                    if (current.key != track.key) { result += "Track changed; repeat the check for the new song\n"; std::ofstream(path) << result; return 3; }
+                    const auto index = lyrics::find(lyrics.lines, current.position);
+                    result += "Playing=" + std::to_string(current.playing) + "; position=" + std::to_string(current.position) + "; lyricIndex=" + std::to_string(index) + "; hasTimeline=" + std::to_string(current.hasTimeline) + "\n";
+                }
+            }
         }
         std::ofstream output(path); output << result;
         return output ? 0 : 1;
@@ -729,7 +746,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
     for (int i = 1; i < argc; ++i) args.emplace_back(argv[i]);
     LocalFree(argv);
     if (args.size() == 2 && args[0] == L"--ui-check") return settingsui::checkUi(args[1]);
-    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check" || args[0] == L"--preferences-check")) return diagnostics(args[0], args[1]);
+    if (args.size() == 2 && (args[0] == L"--probe" || args[0] == L"--network-check" || args[0] == L"--superstar-check" || args[0] == L"--taskbar-probe" || args[0] == L"--current-check" || args[0] == L"--playback-check" || args[0] == L"--preferences-check")) return diagnostics(args[0], args[1]);
     HANDLE mutex = CreateMutexW(nullptr, TRUE, L"Local\\TaskbarLyrics.Native.Prototype");
     if (!mutex) return 1;
     if (GetLastError() == ERROR_ALREADY_EXISTS) {

@@ -1,6 +1,7 @@
 #include "lyrics.h"
 #include "layout.h"
 #include "preferences.h"
+#include "media-metadata.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -50,7 +51,29 @@ int main() {
         merged = preferences::mergeDraft(live, baseline, draft);
         check(merged.fontSize == 26 && merged.globalOffset == -10, "draft values bounded before application");
         check(preferences::mergeDraft(live, baseline, baseline) == live, "unmodified draft leaves live settings intact");
-        std::cout << "PASS: 8 LRC, 5 taskbar layout and 11 preference checks\n";
+        auto fields = metadata::resolve(L"AppleInc.AppleMusicWin", L"王力宏 — 心中的日月", L"", L"");
+        check(fields.artist == L"王力宏" && fields.album == L"心中的日月", "Apple combined Artist metadata");
+        fields = metadata::resolve(L"AppleMusic", L"Artist — Album", L"Album", L"Artist");
+        check(fields.artist == L"Artist" && fields.album == L"Album", "explicit album confirms composite field");
+        fields = metadata::resolve(L"QQMusic", L"Artist — Name", L"", L"");
+        check(fields.artist == L"Artist — Name" && fields.album.empty(), "other players preserve em dash");
+        fields = metadata::resolve(L"AppleMusic", L"Artist-Name", L"", L"");
+        check(fields.artist == L"Artist-Name" && fields.album.empty(), "ordinary hyphen preserved");
+        fields = metadata::resolve(L"AppleMusic", L"Artist — Name", L"Album", L"");
+        check(fields.artist == L"Artist — Name" && fields.album == L"Album", "conflicting explicit album preserved");
+        fields = metadata::resolve(L"AppleMusic", L"Artist — Name", L"", L"Other Artist");
+        check(fields.artist == L"Artist — Name" && fields.album.empty(), "conflicting album artist prevents split");
+        fields = metadata::resolve(L"AppleInc.AppleMusicWin_nzyj5cx40ttqa!App", L"方大同 — 回到未来", L"", L"方大同 — 回到未来");
+        check(fields.artist == L"方大同" && fields.album == L"回到未来", "Apple repeats composite in both artist fields");
+        fields = metadata::resolve(L"AppleMusic", L"", L"Album", L" Album Artist ");
+        check(fields.artist == L"Album Artist" && fields.album == L"Album", "empty artist fallback");
+        fields = metadata::resolve(L"AppleMusic", L"Artist — Album — Edition", L"", L"");
+        check(fields.artist == L"Artist — Album — Edition" && fields.album.empty(), "ambiguous separators preserved");
+        fields = metadata::resolve(L"APPLEINC.APPLEMUSICWIN", L"  S.H.E — Super Star  ", L"", L"S.H.E");
+        check(fields.artist == L"S.H.E" && fields.album == L"Super Star", "case insensitive source and trim");
+        fields = metadata::resolve(L"AppleMusic", L" — Album", L"", L"");
+        check(fields.artist == L"— Album" && fields.album.empty(), "empty prefix preserved");
+        std::cout << "PASS: 8 LRC, 5 taskbar layout, 11 preference and 11 metadata checks\n";
         return 0;
     } catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 1; }
 }

@@ -49,12 +49,12 @@ try {
     Copy-Item "$root/docs/*.md", "$root/docs/settings-*.png" "$out/docs"
     Copy-Item "$root/assets/app.png" "$out/assets"
     Copy-Item "$root/native/README.md" "$out/native"
-    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE", "$out/docs", "$out/assets", "$out/native" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.3.0-win-x64.zip" -Force
+    Compress-Archive -Path "$out/TaskbarLyrics.Native.exe", "$out/README.md", "$out/LICENSE", "$out/docs", "$out/assets", "$out/native" -DestinationPath "$root/artifacts/TaskbarLyrics-Native-0.3.1-win-x64.zip" -Force
     if ($Iscc) {
         & $Iscc "$root/native/installer.iss"
         if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     }
-    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.3.0-win-x64.zip" | Select-Object FullName,Length
+    Get-Item "$out/TaskbarLyrics.Native.exe", "$root/artifacts/TaskbarLyrics-Native-0.3.1-win-x64.zip" | Select-Object FullName,Length
 } finally {
     Pop-Location
     $env:PATH = $savedPath
